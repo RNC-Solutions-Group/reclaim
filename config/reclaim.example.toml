@@ -1,0 +1,32 @@
+# Synthetic example only. Do not put real paths or personal data in this file.
+# Copy it outside the repository, replace the paths, and keep it private.
+
+[project]
+name = "example-project"
+workspace = "./reclaim-work"
+database = "db/inventory.sqlite3"
+reports_dir = "reports"
+
+[scan]
+include_hidden = true
+follow_reparse_points = false
+exclude_names = ["$RECYCLE.BIN", "System Volume Information", "$SysReset", ".Trashes"]
+hash_media_libraries = false
+chunk_bytes = 8388608
+
+# Optional project-specific rules appended to the generic default policy.
+# [policy]
+# overlay = "./my-project-policy.toml"
+
+# Relative source paths resolve against this file's directory.
+[[sources]]
+id = "source-a"
+label = "Example laptop A"
+path = "../fixtures/source-a"
+priority = 100
+
+[[sources]]
+id = "source-b"
+label = "Example laptop B"
+path = "../fixtures/source-b"
+priority = 100

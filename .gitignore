@@ -1,5 +1,13 @@
 AGENTS.md
 
+# Local/private project data must live outside the repository. These patterns
+# are a backstop only, not the primary separation mechanism.
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+/reclaim-work/
+/projects/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
