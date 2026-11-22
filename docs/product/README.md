@@ -24,12 +24,15 @@ superseded by the product roadmap; the CP1 audit and architecture remain useful
 background.
 
 M1 implementation documentation is in [`../m1/`](../m1/): architecture, data
-model, operator guide, and the test/acceptance matrix.
+model, operator guide, and the test/acceptance matrix. M2 desktop documentation
+is in [`../m2/`](../m2/): architecture, operator guide, screenshots, test matrix,
+and Qt packaging notes.
 
 ## Status
 
-The product direction is a proposal. The only authorized implementation so far
-is the CP1 corrective work described in
-[`../cp1-followup/cp1-corrective-notes.md`](../cp1-followup/cp1-corrective-notes.md).
-No extraction, GUI, migration execution, SLM, or external AI integration has
-been implemented.
+The product direction is a proposal. Implemented and synthetically validated:
+the CP1 inventory/analysis engine, M1/M1A planning and journaled execution, and
+the M2 PySide6 desktop shell. Real-data migration, extraction, semantic
+intelligence, installers, and external AI remain unimplemented or separately
+authorized. See the [roadmap](roadmap.md) and [ADRs](architecture-decisions.md)
+for current gates.

@@ -140,6 +140,10 @@ adding intelligence.
 
 ## 5. M2 — Desktop shell and review workflow
 
+> **Status 2026-11-22:** Functional alpha implemented on `feat/m2`; 122
+> synthetic tests pass, Qt offscreen GUI tests included. Operator review
+> pending. See [`docs/m2/`](../m2/README.md).
+
 **Objective:** Make the M1 workflow usable without a terminal.
 
 ### Scope
