@@ -4,11 +4,12 @@ Reclaim is a local-first utility for discovering, inventorying, reconciling,
 organizing, and migrating personal files across multiple computers and backup
 collections — without risking the originals.
 
-> **Status: CP1 (pre-alpha).** The repository currently contains a read-only
-> inventory, hashing, duplicate-analysis, and reporting engine. It does **not**
-> copy, move, rename, delete, or reorganize source files, and it does not yet
-> contain a GUI or a migration executor. Migration execution is a later,
-> separately authorized checkpoint.
+> **Status: CP1 + corrective foundation (pre-alpha).** The repository contains a
+> read-only inventory, hashing, exact-duplicate, analysis, and reporting engine,
+> plus the CP1 corrective work (source-root cache identity, schema v2, archive
+> registration). It does **not** yet contain document extraction, a GUI, or a
+> migration executor. Migration execution is a later, separately authorized
+> milestone.
 
 ## Why Reclaim exists
 
@@ -78,11 +79,11 @@ overlapping source/workspace/destination paths before scanning.
 | Multi-source registration and canonical-path validation | Implemented |
 | Read-only enumeration of files, directories, links, excluded and failed entries | Implemented |
 | Metadata capture (size, timestamps, attributes, hidden/system/cloud flags, depth) | Implemented |
-| Resumable SHA-256 hashing with size/mtime cache | Implemented |
+| Resumable SHA-256 hashing with size/mtime cache and source-root identity | Implemented |
 | Exact duplicate grouping across sources, with all occurrences retained | Implemented |
 | File-type and extension analysis with lightweight signature checks | Implemented |
 | Data-driven disposition recommendations with rule evidence | Implemented |
-| Source-preservation fingerprints before and after hashing | Implemented |
+| Source metadata-consistency fingerprints before and after hashing (metadata only, not byte integrity) | Implemented |
 | Private CSV/JSON reports and run manifest | Implemented |
 | Similarity, revision detection, content extraction, and AI assistance | Not implemented (later checkpoint) |
 | Migration planning, destination preview, copy execution, GUI | Not implemented (later checkpoints) |
@@ -103,6 +104,8 @@ src/reclaim/          Reusable inventory and analysis engine
   data/               Generic default type map and policy
 tests/                Synthetic-fixture tests (no real user data)
 docs/cp1/             CP1 architecture, data model, roadmap, decisions
+docs/product/         Product outlook, architecture assessment, roadmap, ADRs, benchmarks
+docs/cp1-followup/    CP1 corrective work notes
 config/               Synthetic example configuration
 ```
 
@@ -131,10 +134,22 @@ permitted to create one.
 
 ## Documentation
 
+**Product and engineering direction**
+
+- [Product outlook](docs/product/product-outlook.md)
+- [Architecture assessment](docs/product/architecture-assessment.md)
+- [Roadmap](docs/product/roadmap.md)
+- [Architecture decisions](docs/product/architecture-decisions.md)
+- [Testing and benchmark strategy](docs/product/testing-and-benchmarking.md)
+- [Immediate next assignment](docs/product/next-assignment.md)
+
+**CP1 background and corrective work**
+
 - [Engine architecture](docs/cp1/cp1-engine-architecture.md)
 - [Data model](docs/cp1/cp1-data-model.md)
-- [Roadmap](docs/cp1/cp1-roadmap.md)
+- [CP1 roadmap (historical)](docs/cp1/cp1-roadmap.md)
 - [Decisions required](docs/cp1/cp1-decisions-required.md)
+- [CP1 corrective notes](docs/cp1-followup/cp1-corrective-notes.md)
 
 ## License
 

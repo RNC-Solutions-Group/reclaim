@@ -1,12 +1,30 @@
 # CP1 — Decisions Required Before CP2/CP3
 
-**Status:** Open. These decisions are not implementation details; each changes
-what "correct" means for the migration. They are recorded here without private
-paths or filenames. The mapping to specific collection labels is in the private
-CP1 audit.
+**Status:** Partially resolved. D1 and D2 were resolved by the operator on
+2026-11-22; the remaining decisions are retained for planning.
+**Scope:** These decisions are not implementation details; each changes what
+"correct" means for the migration. They are recorded here without private paths
+or filenames. The mapping to specific collection labels is in the private CP1
+audit.
 
-Legend: **Blocking** = CP2 cannot close without it; **Planning** = required
-before a migration plan is generated; **Release** = required before publication.
+Legend: **Resolved** = operator decision recorded; **Blocking** = cannot proceed
+without it; **Planning** = required before a migration plan is generated;
+**Release** = required before publication.
+
+## Operator resolution log (2026-11-22)
+
+- **D1 resolved.** The six source directories are six intentionally separate
+  collections. The two MacBook collections are distinct sources and must remain
+  separate.
+- **D2 resolved.** The operator manually recovered the additional source content
+  relevant to the migration. The prior collector's cloud/path failures do not
+  require a new recovery project and are accounted for within the available
+  dataset. The staged set is accepted as the working source of truth. The
+  historical coverage caveat is retained as audit evidence, not as an open
+  investigation.
+
+These resolutions supersede the "unknown/blocking" framing in the historical CP1
+text below. The CP1 audit evidence itself is preserved unchanged.
 
 ---
 
@@ -14,31 +32,35 @@ before a migration plan is generated; **Release** = required before publication.
 
 | ID | Decision | Default recommendation | Needed by |
 | --- | --- | --- | --- |
-| D1 | Source set and identity | Treat the six staged collections as six distinct sources until proven otherwise | **Blocking** |
-| D2 | Source completeness / re-collection | Resolve before planning; do not assume completeness | **Blocking** |
-| D3 | Canonical-copy policy | Source priority, then path order; never timestamps; per-group override | **Blocking** |
-| D4 | Media phase boundary | Defer all image/video/audio to a separate phase | **Blocking** |
-| D5 | Destination taxonomy | Collection-first, category-second; no extension flattening | Planning |
-| D6 | Duplicate treatment | Keep one canonical occurrence; record all provenance | Planning |
-| D7 | Archives and installers | Retain archives for review; no automatic installer exclusion | Planning |
-| D8 | Destination root and capacity | Dedicated volume with ≥2× plan size free | Planning |
-| D9 | Timestamp authority | Evidence only; never authoritative | Now |
+| D1 | Source set and identity | **Resolved:** six distinct sources; two MacBook collections remain separate | Resolved |
+| D2 | Source completeness / re-collection | **Resolved:** staged set accepted; prior gaps accounted for by operator | Resolved |
+| D3 | Canonical-copy policy | Source priority, then path order; never timestamps; per-group override | **Blocking (M1)** |
+| D4 | Media phase boundary | **Accepted:** defer all image/video/audio and packaged media to the media phase | Accepted |
+| D5 | Destination taxonomy | Collection-first, category-second; no extension flattening | Planning (M5) |
+| D6 | Duplicate treatment | Keep one canonical occurrence; record all provenance | Planning (M1) |
+| D7 | Archives and installers | Retain archives for review; no automatic installer exclusion | Planning (M3/M5) |
+| D8 | Destination root and capacity | Dedicated volume with ≥2× plan size free | Planning (M1 dry run) |
+| D9 | Timestamp authority | Evidence only; never authoritative | Accepted |
 | D10 | License | Apache-2.0 (subject to legal approval) | Release |
-| D11 | GUI toolkit | PySide6/Qt | CP6 |
+| D11 | GUI toolkit | PySide6/Qt | CP6 / M2 |
 | D12 | Supported OS matrix | Windows 11 + macOS 13+ + Ubuntu 22.04+ | Release |
-| D13 | Prior-tool artifacts in source root | Exclude, do not delete, document | Now |
-| D14 | Project database protection | OS permissions + user-managed encrypted volume | CP6 |
-| D15 | Cross-source canonical ownership | Review per group; no global machine priority yet | Planning |
-| D16 | Media target format | Decide in media checkpoint (CP5) | CP5 |
+| D13 | Prior-tool artifacts in source root | Exclude, do not delete, document | Accepted |
+| D14 | Project database protection | OS permissions + user-managed encrypted volume | CP6 / M2 |
+| D15 | Cross-source canonical ownership | Review per group; no global machine priority yet | Planning (M1) |
+| D16 | Media target format | Decide in media checkpoint (M8/media phase) | Media phase |
 
 ---
 
 ## D1 — Source set and identity
 
+> **Resolved 2026-11-22:** Six separate, intentional collections. The two
+> MacBook collections are distinct sources and remain separate. Do not reopen
+> this as an investigation.
+
 **Context.** The brief expected five collections; the staged set contains six.
 Two are MacBook-named (one media-heavy, one small personal/coursework set), and
-their relationship is unknown. A prior-tool reports directory also sits in the
-source parent but is not a collection.
+their relationship was initially unknown. A prior-tool reports directory also
+sits in the source parent but is not a collection.
 
 **Options.**
 
@@ -56,6 +78,12 @@ be attributed to the wrong machine; a real source could be omitted.
 ---
 
 ## D2 — Source completeness and re-collection
+
+> **Resolved 2026-11-22:** The operator manually recovered the relevant
+> additional content. The prior collector's cloud/path gaps are accounted for
+> within the available dataset and do not require a recovery project. The staged
+> set is accepted as the working source of truth; the historical coverage caveat
+> remains as audit evidence.
 
 **Context.** The staged collections are composite second-generation copies. A
 prior collector copied only `Downloads` for two collections, skipped 12 reparse
@@ -108,6 +136,10 @@ folder context even though the bytes are identical.
 ---
 
 ## D4 — Media phase boundary
+
+> **Accepted 2026-11-22:** The alpha is document-focused. All image/video/audio
+> and packaged media are deferred to the media phase. Media may be inventoried
+> and hashed for audit, but it is not included in the first migration plan.
 
 **Context.** 47.99 GB (55% of bytes) is image/video/audio, including a 35.22 GB
 packaged photo library with 72,238 internal files. The CP1 amendment excludes

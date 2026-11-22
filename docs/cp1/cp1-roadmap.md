@@ -1,5 +1,10 @@
 # CP1-B — Recommended Roadmap
 
+> **Historical checkpoint document.** This was the CP1 roadmap. It is
+> superseded by the product-level roadmap in
+> [`docs/product/roadmap.md`](../product/roadmap.md). It is retained for audit
+> history.
+
 **Status:** Proposal for operator review. CP1 is complete when its deliverables
 are accepted; this document sequences what follows and what must be decided
 before each step.

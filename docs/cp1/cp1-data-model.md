@@ -64,8 +64,8 @@ pattern; the diagram shows the common file case.
 
 ## 3. Implemented CP1 schema
 
-These tables exist today in `src/reclaim/store.py` (schema version 1). They are
-the foundation, not the final model.
+These tables exist today in `src/reclaim/store.py` (schema version 2, including
+the CP1 cache-identity correction). They are the foundation, not the final model.
 
 ### 3.1 `meta`
 
@@ -82,10 +82,11 @@ the foundation, not the final model.
 | label | TEXT | User-facing name; may be private |
 | root_path | TEXT | As registered |
 | canonical_root | TEXT | Resolved absolute path |
+| root_identity | TEXT | Canonical root + volume identity; cache identity |
 | priority | INTEGER | Lower = preferred for canonical copy |
 | registered_at | TEXT | UTC ISO-8601 |
 
-**Future additions:** `project_id`, `volume_id`, `filesystem`, `case_sensitive`,
+**Future additions:** `project_id`, `filesystem`, `case_sensitive`,
 `read_only_probe`, `coverage_status`, `coverage_note`, `last_seen_at`.
 
 ### 3.3 `scan_runs`
@@ -97,7 +98,8 @@ the foundation, not the final model.
 | tool_version | TEXT | Reproducibility |
 | config_sha256 | TEXT | Canonical config fingerprint |
 | status | TEXT | running / scanned / complete / failed / partial |
-| source_fingerprints_json | TEXT | Per-source metadata digest before/after |
+| source_fingerprints_json | TEXT | Per-source metadata-consistency digest (paths, sizes, mtimes, entry types); **not** byte-level integrity |
+| source_identities_json | TEXT | Root identities used by the run |
 | notes | TEXT | Free-form run notes |
 
 **Future additions:** `project_id`, `host_platform`, `scan_options_json`,
@@ -159,11 +161,13 @@ when `ok`; no digest when `error` or `deferred`.
 | Column | Type | Notes |
 | --- | --- | --- |
 | source_id, rel_path, size_bytes, modified_ns, algorithm | PK | Cache identity |
+| root_identity | TEXT | Must match the source's current root identity |
 | digest, signature_hex, hashed_at | | |
 
-A cache hit requires all of source, relative path, size, mtime, and algorithm to
-match. Cache rows are evidence, not authority: a later verification can
-invalidate them.
+A cache hit requires source, relative path, size, mtime, algorithm, **and root
+identity** to match. A source registration whose canonical root or volume
+changes invalidates its cache. Cache rows are evidence, not authority: a later
+verification can invalidate them.
 
 ### 3.7 `scan_errors`
 
@@ -174,7 +178,8 @@ error report.
 ### 3.8 `verification_checks`
 
 `check_id`, `run_id`, `check_name`, `status` (PASS/FAIL/ERROR), `detail`,
-`checked_at`. Used for source-fingerprint checks and sample re-hashing.
+`checked_at`. Used for source metadata-consistency checks and sample
+re-hashing. A metadata check is not a byte-level integrity proof.
 
 ---
 
@@ -520,7 +525,7 @@ Rules:
 
 | Target table | CP1 status |
 | --- | --- |
-| `meta`, `sources`, `scan_runs`, `entries`, `hashes`, `hash_cache`, `scan_errors`, `verification_checks` | Implemented (schema v1) |
+| `meta`, `sources`, `scan_runs`, `entries`, `hashes`, `hash_cache`, `scan_errors`, `verification_checks` | Implemented (schema v2; root identity added in CP1 follow-through) |
 | `source_probes` | Not implemented; source probe data is validated in memory only |
 | `analyses`, `recommendations` | Computed at export; not persisted |
 | `duplicate_groups`, `duplicate_members` | Computed at export; not persisted |

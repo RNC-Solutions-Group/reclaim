@@ -357,7 +357,7 @@ class PlanItem:
 | Stage | Input | Output | Durable checkpoint | Failure handling |
 | --- | --- | --- | --- | --- |
 | Register | Project TOML | `sources` rows, canonical paths | Source rows | Reject overlap/missing/unreadable; do not invent sources |
-| Snapshot | Source roots | Metadata fingerprint | `scan_runs` start fingerprint | Abort that source, record error |
+| Snapshot | Source roots | Metadata-consistency fingerprint | `scan_runs` start fingerprint | Abort that source, record error |
 | Enumerate | Source roots | `entries` rows | Per-batch commits | Record per-entry error, continue |
 | Hash | Pending files | `hashes`, `hash_cache` | Per-file rows | Record error, continue; retry later |
 | Analyze | Entries + hashes | Duplicate groups, type/structure metrics | Derived tables or run snapshot | Analysis failure does not alter inventory |
@@ -391,8 +391,10 @@ duplicate canonical roots, and a destination that is inside any source.
 - Detect cloud placeholders from attributes; do not open them.
 - Record excluded subtrees as entries with an exclusion reason, not as absent.
 - Batch inserts (≈1,000 rows) and checkpoint scan progress per source.
-- Persist the source metadata fingerprint at the end of the scan; recomputing it
-  later proves the source was unchanged.
+- Persist the source metadata fingerprint at the end of the scan. Recomputing it
+  later confirms **metadata consistency** (relative paths, entry types, sizes,
+  and modification times); it does not prove byte-level integrity. Content
+  integrity evidence comes from SHA-256 hashes and sampled re-reads.
 
 ### 8.3 Hashing
 
@@ -648,6 +650,22 @@ Optimizations, in order of value:
 5. optional fast pre-hash for candidate grouping (only if benchmarks justify it;
    exact SHA-256 remains the final authority).
 
+### 13.4 Verification layers
+
+These are distinct evidence types and must not be conflated in UI or reports:
+
+| Layer | What it establishes | What it does **not** establish |
+| --- | --- | --- |
+| Source metadata-consistency fingerprint | Relative paths, entry types, sizes, and mtimes are unchanged between two observations | File contents are unchanged |
+| Per-file SHA-256 | The complete bytes read at hash time have a specific digest | The bytes are still identical later |
+| Sampled re-read | A sample of files still matches stored digests | Every file is intact |
+| Destination post-copy hash | The copied destination file matches the planned digest | The source is unchanged |
+| Full reconciliation | Every source occurrence has an accounted outcome | A global proof of storage integrity |
+
+A passing metadata fingerprint is a useful invariant check, not a content
+integrity proof. Reports must say "metadata consistency", never "byte-identical
+sources", unless a full hash comparison actually ran.
+
 ---
 
 ## 14. Privacy and security
@@ -772,7 +790,16 @@ full architecture exists.
 
 ---
 
-## 20. Recommended next checkpoint
+## 20. Recommended next checkpoint (historical)
+
+> **Superseded 2026-11-22.** The CP1 source-identity/completeness questions were
+> resolved by the operator, and the next development sequence is now defined in
+> the product roadmap:
+> [`docs/product/roadmap.md`](../product/roadmap.md). The immediate recommended
+> work package is the migration spine and plan contract
+> ([`docs/product/next-assignment.md`](../product/next-assignment.md)).
+
+The original CP2 proposal below is retained for audit history:
 
 **CP2 — Source completeness and review foundation.** Before planning any
 migration, resolve whether the six staged collections are the intended source of
@@ -780,5 +807,3 @@ truth, document the OneDrive/junction gap, and obtain operator decisions on
 canonical-copy and media boundaries. Then add the override/recommendation
 tables and a CLI review workflow so the operator can accept or change
 recommendations before a plan exists.
-
-Planning and execution remain blocked until those decisions are recorded.
