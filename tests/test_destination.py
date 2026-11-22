@@ -12,6 +12,8 @@ from reclaim.destination import (
     DestinationItem,
     DestinationOccupied,
     DestinationPolicy,
+    DestinationUnsupported,
+    destination_path_key,
     name_keys,
     normalize_relative,
     publish_no_overwrite,
@@ -78,6 +80,69 @@ class DestinationPolicyTests(unittest.TestCase):
         self.assertFalse(result.ok)
         codes = {issue.code for issue in result.issues}
         self.assertIn("DUPLICATE_DESTINATION", codes)
+
+    def test_equivalent_parent_directories_collide(self) -> None:
+        policy = DestinationPolicy("windows")
+        items = [
+            DestinationItem(1, "Documents/Report.pdf", 1),
+            DestinationItem(2, "documents/report.pdf", 1),
+        ]
+        result = validate_plan(self.root, items, policy)
+        self.assertIn(
+            "DUPLICATE_DESTINATION", {issue.code for issue in result.issues}
+        )
+
+    def test_unicode_equivalent_parent_components_collide(self) -> None:
+        policy = DestinationPolicy("macos")
+        composed = "Résumé/Notes.txt"
+        decomposed = "Re\u0301sume\u0301/Notes.txt"
+        self.assertEqual(
+            destination_path_key(composed, policy),
+            destination_path_key(decomposed, policy),
+        )
+        result = validate_plan(
+            self.root,
+            [DestinationItem(1, composed, 1), DestinationItem(2, decomposed, 1)],
+            policy,
+        )
+        self.assertIn(
+            "DUPLICATE_DESTINATION", {issue.code for issue in result.issues}
+        )
+
+    def test_equivalent_prefix_conflict(self) -> None:
+        policy = DestinationPolicy("windows")
+        items = [
+            DestinationItem(1, "Documents", 1),
+            DestinationItem(2, "documents/Report.pdf", 1),
+        ]
+        result = validate_plan(self.root, items, policy)
+        self.assertIn(
+            "PATH_PREFIX_CONFLICT", {issue.code for issue in result.issues}
+        )
+
+    def test_existing_directory_case_collision(self) -> None:
+        (self.root / "documents").mkdir()
+        policy = DestinationPolicy("windows")
+        result = validate_plan(
+            self.root,
+            [DestinationItem(1, "Documents/report.pdf", 1)],
+            policy,
+        )
+        self.assertIn(
+            "CASE_UNICODE_COLLISION", {issue.code for issue in result.issues}
+        )
+
+    def test_case_sensitive_target_allows_distinct_paths(self) -> None:
+        policy = DestinationPolicy("linux")
+        result = validate_plan(
+            self.root,
+            [
+                DestinationItem(1, "Documents/Report.pdf", 1),
+                DestinationItem(2, "documents/report.pdf", 1),
+            ],
+            policy,
+        )
+        self.assertTrue(result.ok, result.issues)
 
     def test_prefix_conflict(self) -> None:
         policy = DestinationPolicy("linux")
@@ -150,6 +215,19 @@ class DestinationPolicyTests(unittest.TestCase):
         with self.assertRaises(DestinationOccupied):
             publish_no_overwrite(temp, dest)
         self.assertEqual(dest.read_bytes(), b"old")
+
+    def test_publish_fails_closed_when_link_is_unsupported(self) -> None:
+        temp = Path(self.tmp.name) / "temp3.bin"
+        dest = self.root / "unsupported.bin"
+        write_bytes(temp, b"new")
+        with mock.patch(
+            "os.link",
+            side_effect=OSError(95, "Operation not supported"),
+        ):
+            with self.assertRaises(DestinationUnsupported):
+                publish_no_overwrite(temp, dest)
+        self.assertFalse(dest.exists())
+        self.assertFalse(temp.exists())
 
 
 if __name__ == "__main__":

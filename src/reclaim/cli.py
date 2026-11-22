@@ -47,6 +47,13 @@ from .execution import (
     verify_execution,
 )
 
+EXIT_OK = 0
+EXIT_ERROR = 2
+EXIT_EXECUTION_FAILURE = 3
+EXIT_INCOMPLETE = 4
+EXIT_VERIFICATION_FAILURE = 5
+EXIT_RECONCILIATION_FAILURE = 6
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
@@ -158,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
         return int(args.func(args))
     except (ReclaimError, ValueError) as exc:
         print(f"reclaim: error: {exc}", file=sys.stderr)
-        return 2
+        return EXIT_ERROR
 
 
 # -- helpers ---------------------------------------------------------------
@@ -624,7 +631,9 @@ def command_plan(args: argparse.Namespace) -> int:
         print()
         for line in plan_preview_lines(store, result.plan_id, limit=20):
             print(line)
-    return 0
+        if result.summary["conflicts"] or result.summary.get("global_issues"):
+            return EXIT_EXECUTION_FAILURE
+    return EXIT_OK
 
 
 def command_preview(args: argparse.Namespace) -> int:
@@ -670,7 +679,18 @@ def command_execute(args: argparse.Namespace) -> int:
         print(f"plan:      {result.plan_id}")
         print(f"status:    {result.status}")
         print(json.dumps(result.summary, indent=2, sort_keys=True, default=str))
-    return 0
+        if result.dry_run:
+            return EXIT_OK if result.summary.get("would_execute") else EXIT_EXECUTION_FAILURE
+        if result.status == "complete":
+            return EXIT_OK
+        if result.status == "paused":
+            return EXIT_INCOMPLETE
+        if result.status == "verification_failed":
+            return EXIT_VERIFICATION_FAILURE
+        if result.status in ("verification_incomplete",):
+            return EXIT_INCOMPLETE
+        return EXIT_EXECUTION_FAILURE
+    return EXIT_OK
 
 
 def command_verify_execution(args: argparse.Namespace) -> int:
@@ -678,7 +698,17 @@ def command_verify_execution(args: argparse.Namespace) -> int:
     with _store(config) as store:
         result = verify_execution(store, config, args.execution)
         print(json.dumps(result, indent=2, sort_keys=True))
-    return 0
+        if result["status"] == "INCOMPLETE":
+            return EXIT_INCOMPLETE
+        if result.get("execution_status") == "verification_failed":
+            return EXIT_VERIFICATION_FAILURE
+        if result["status"] == "FAIL":
+            return EXIT_VERIFICATION_FAILURE
+        if result.get("execution_status") == "verification_incomplete":
+            return EXIT_INCOMPLETE
+        if result.get("execution_status") == "complete_with_failures":
+            return EXIT_EXECUTION_FAILURE
+        return EXIT_OK
 
 
 def command_reconcile(args: argparse.Namespace) -> int:
@@ -687,7 +717,11 @@ def command_reconcile(args: argparse.Namespace) -> int:
         out_dir = Path(args.out) if args.out else config.workspace / "reconciliation"
         summary = reconcile_execution(store, args.execution, out_dir)
         print(json.dumps(summary, indent=2, sort_keys=True))
-    return 0
+        if summary.get("successful"):
+            return EXIT_OK
+        if summary.get("assessment") == "incomplete":
+            return EXIT_INCOMPLETE
+        return EXIT_RECONCILIATION_FAILURE
 
 
 def command_override_add(args: argparse.Namespace) -> int:

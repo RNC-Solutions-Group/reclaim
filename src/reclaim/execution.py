@@ -18,6 +18,7 @@ from .destination import (
     DestinationError,
     DestinationOccupied,
     DestinationPolicy,
+    DestinationUnsupported,
     publish_no_overwrite,
     safe_makedirs,
     validate_destination_root,
@@ -213,9 +214,10 @@ def _preflight(
         target_platform=plan_row["target_platform"],
         max_path_length=plan_row["max_path_length"],
     )
+    selected = plan_row["destination_selected"] or plan_row["destination_root"]
     root = canonical_path(plan_row["destination_root"])
     root_issues = validate_destination_root(
-        root,
+        selected,
         policy,
         source_roots=[source.path for source in config.sources],
         workspace=config.workspace,
@@ -224,6 +226,10 @@ def _preflight(
         raise ExecutionError(
             "Destination preflight failed: "
             + "; ".join(f"{issue.code}: {issue.message}" for issue in root_issues)
+        )
+    if os.path.normcase(str(canonical_path(selected))) != os.path.normcase(str(root)):
+        raise ExecutionError(
+            "Destination selected path no longer resolves to the planned root"
         )
     source_issues = revalidate_sources(
         config, json.loads(plan_row["source_snapshot_json"])
@@ -265,9 +271,10 @@ def dry_run(
         target_platform=plan["target_platform"],
         max_path_length=plan["max_path_length"],
     )
+    selected = plan["destination_selected"] or plan["destination_root"]
     root = canonical_path(plan["destination_root"])
     root_issues = validate_destination_root(
-        root,
+        selected,
         policy,
         source_roots=[source.path for source in config.sources],
         workspace=config.workspace,
@@ -276,6 +283,10 @@ def dry_run(
         raise ExecutionError(
             "Destination dry-run failed: "
             + "; ".join(f"{issue.code}: {issue.message}" for issue in root_issues)
+        )
+    if os.path.normcase(str(canonical_path(selected))) != os.path.normcase(str(root)):
+        raise ExecutionError(
+            "Destination selected path no longer resolves to the planned root"
         )
     copy_items = [
         item for item in items if item.disposition == "copy" and item.destination_rel
@@ -402,6 +413,8 @@ def execute_plan(
         "running",
         "complete",
         "complete_with_failures",
+        "verification_failed",
+        "verification_incomplete",
     ):
         raise ExecutionError(f"Plan status {plan['status']!r} is not executable")
     items = get_plan_items(store, plan_id)
@@ -444,6 +457,37 @@ def execute_plan(
             continue
         state = current["state"]
         if state == "verified":
+            destination = _destination_path(
+                preflight.destination_root, item.destination_rel or ""
+            )
+            if not destination.exists() or destination.is_symlink():
+                _fail_item(
+                    store,
+                    execution_id,
+                    item,
+                    "DESTINATION_MISSING",
+                    "Verified destination is missing on resume",
+                )
+                continue
+            try:
+                actual = _sha256_file(destination)
+            except OSError as exc:
+                _fail_item(
+                    store,
+                    execution_id,
+                    item,
+                    "DESTINATION_UNREADABLE",
+                    f"Verified destination cannot be read: {exc}",
+                )
+                continue
+            if actual != item.expected_sha256:
+                _fail_item(
+                    store,
+                    execution_id,
+                    item,
+                    "DESTINATION_CHANGED",
+                    "Verified destination no longer matches the planned digest",
+                )
             continue
         if state == "failed" and not retry_failed:
             continue
@@ -528,7 +572,21 @@ def _execute_item(
     source = _source_path(config, item)
 
     if destination.exists() or destination.is_symlink():
-        if item.expected_sha256 and destination.is_file():
+        published = store.conn.execute(
+            """
+            SELECT 1 FROM execution_events
+            WHERE execution_id=? AND item_id=? AND event_type='DEST_PUBLISHED'
+            LIMIT 1
+            """,
+            (execution_id, item.item_id),
+        ).fetchone()
+        provenance = published is not None or prior["state"] == "verified"
+        if (
+            provenance
+            and item.expected_sha256
+            and destination.is_file()
+            and not destination.is_symlink()
+        ):
             try:
                 actual = _sha256_file(destination)
             except OSError as exc:
@@ -537,12 +595,22 @@ def _execute_item(
             if actual == item.expected_sha256:
                 _verify_item(store, execution_id, item, actual)
                 return
+            if published is not None:
+                _fail_item(
+                    store,
+                    execution_id,
+                    item,
+                    "DESTINATION_CHANGED",
+                    "Previously published destination no longer matches the planned digest",
+                )
+                return
         _conflict_item(
             store,
             execution_id,
             item,
-            "DESTINATION_EXISTS",
-            "Destination appeared or was already present; refusing to overwrite",
+            "DESTINATION_PREEXISTING" if published is None else "DESTINATION_EXISTS",
+            "Destination was present without verified provenance for this execution; "
+            "refusing to adopt or overwrite it",
         )
         return
 
@@ -631,9 +699,26 @@ def _execute_item(
                 store, execution_id, item, "DESTINATION_RACE", str(exc)
             )
             return
+        except DestinationUnsupported as exc:
+            _fail_item(
+                store,
+                execution_id,
+                item,
+                "PUBLICATION_UNSUPPORTED",
+                str(exc),
+            )
+            return
         except OSError as exc:
             _fail_item(store, execution_id, item, "PUBLISH_FAILED", str(exc))
             return
+        _event(
+            store,
+            execution_id,
+            "DEST_PUBLISHED",
+            item_id=item.item_id,
+            detail={"sha256": item.expected_sha256},
+        )
+        store.commit()
         actual = _sha256_file(destination)
         if actual != item.expected_sha256:
             _fail_item(
@@ -756,62 +841,172 @@ def verify_execution(
     plan = get_plan_row(store, execution["plan_id"])
     if recompute_plan_digest(store, plan["plan_id"]) != plan["plan_digest"]:
         raise ExecutionError("Plan content no longer matches its digest")
+    if execution["status"] in ("running", "paused"):
+        return {
+            "execution_id": execution_id,
+            "status": "INCOMPLETE",
+            "execution_status": execution["status"],
+            "verified": 0,
+            "failed": 0,
+            "missing": 0,
+            "mismatches": [],
+            "counts": _execution_counts(store, execution_id),
+        }
+
     root = canonical_path(execution["destination_root"])
     verified = 0
     failed = 0
     missing = 0
     mismatches: list[dict[str, Any]] = []
+    verification_codes = (
+        "DESTINATION_MISSING",
+        "DESTINATION_UNREADABLE",
+        "VERIFY_MISMATCH",
+    )
+    placeholders = ",".join("?" for _ in verification_codes)
     rows = store.conn.execute(
-        """
-        SELECT i.*, p.source_id, p.source_rel_path, p.expected_sha256 AS plan_digest
+        f"""
+        SELECT i.*, p.destination_rel, p.expected_sha256 AS plan_digest
         FROM execution_items i
         JOIN plan_items p ON p.plan_id=? AND p.item_id=i.item_id
-        WHERE i.execution_id=? AND i.state='verified'
+        WHERE i.execution_id=? AND p.disposition='copy'
+          AND (
+            i.state='verified'
+            OR (i.state='failed' AND i.error_code IN ({placeholders}))
+          )
         ORDER BY i.item_id
         """,
-        (plan["plan_id"], execution_id),
+        (plan["plan_id"], execution_id, *verification_codes),
     ).fetchall()
+
+    def mark_failure(row: Any, code: str, message: str, actual: str | None) -> None:
+        nonlocal failed, missing
+        failed += 1
+        if code == "DESTINATION_MISSING":
+            missing += 1
+        mismatches.append(
+            {
+                "item_id": row["item_id"],
+                "code": code,
+                "path": row["destination_rel"],
+                "message": message,
+            }
+        )
+        store.conn.execute(
+            """
+            UPDATE execution_items
+            SET state='failed', actual_sha256=?, error_code=?, error_message=?,
+                finished_at=?
+            WHERE execution_id=? AND item_id=?
+            """,
+            (
+                actual,
+                code,
+                message,
+                utc_now_iso(),
+                execution_id,
+                row["item_id"],
+            ),
+        )
+        _event(
+            store,
+            execution_id,
+            "VERIFY_FAILED",
+            item_id=row["item_id"],
+            detail={"code": code, "message": message, "actual": actual},
+        )
+
     for row in rows:
         path = root.joinpath(*(row["destination_rel"] or "").split("/"))
-        if not path.exists():
-            missing += 1
-            failed += 1
-            mismatches.append(
-                {"item_id": row["item_id"], "code": "MISSING", "path": row["destination_rel"]}
+        if not path.exists() or path.is_symlink():
+            mark_failure(
+                row,
+                "DESTINATION_MISSING",
+                "Destination file is missing or is a link/reparse point",
+                None,
             )
             continue
-        actual = _sha256_file(path)
+        try:
+            actual = _sha256_file(path)
+        except OSError as exc:
+            mark_failure(
+                row,
+                "DESTINATION_UNREADABLE",
+                f"Destination cannot be read for verification: {exc}",
+                None,
+            )
+            continue
         if actual != row["plan_digest"]:
-            failed += 1
-            mismatches.append(
-                {
-                    "item_id": row["item_id"],
-                    "code": "HASH_MISMATCH",
-                    "path": row["destination_rel"],
-                }
-            )
-            store.conn.execute(
-                "UPDATE execution_items SET state='failed', error_code='VERIFY_MISMATCH', error_message=?, actual_sha256=? WHERE execution_id=? AND item_id=?",
-                (
-                    "Destination no longer matches the planned digest",
-                    actual,
-                    execution_id,
-                    row["item_id"],
-                ),
-            )
-            _event(
-                store,
-                execution_id,
+            mark_failure(
+                row,
                 "VERIFY_MISMATCH",
-                item_id=row["item_id"],
-                detail={"expected": row["plan_digest"], "actual": actual},
+                "Destination no longer matches the planned digest",
+                actual,
             )
         else:
             verified += 1
             store.conn.execute(
-                "UPDATE execution_items SET actual_sha256=? WHERE execution_id=? AND item_id=?",
-                (actual, execution_id, row["item_id"]),
+                """
+                UPDATE execution_items
+                SET state='verified', actual_sha256=?, error_code=NULL,
+                    error_message=NULL, finished_at=?
+                WHERE execution_id=? AND item_id=?
+                """,
+                (actual, utc_now_iso(), execution_id, row["item_id"]),
             )
+            _event(
+                store,
+                execution_id,
+                "VERIFY_PASSED",
+                item_id=row["item_id"],
+                detail={"sha256": actual},
+            )
+
+    counts = _execution_counts(store, execution_id)
+    blocking = counts.get("failed", 0) + counts.get("conflict", 0)
+    pending = counts.get("pending", 0)
+    if failed:
+        execution_status = "verification_failed"
+    elif blocking:
+        execution_status = "complete_with_failures"
+    elif pending:
+        execution_status = "verification_incomplete"
+    else:
+        execution_status = "complete"
+
+    _set_execution_status(store, execution_id, execution_status)
+    if execution_status in (
+        "complete",
+        "complete_with_failures",
+        "verification_failed",
+    ):
+        store.conn.execute(
+            "UPDATE plans SET status=? WHERE plan_id=?",
+            (execution_status, plan["plan_id"]),
+        )
+    _event(
+        store,
+        execution_id,
+        "VERIFICATION_COMPLETED",
+        detail={
+            "verified": verified,
+            "failed": failed,
+            "missing": missing,
+            "execution_status": execution_status,
+        },
+    )
+    summary = json.loads(execution["summary_json"] or "{}")
+    summary["counts"] = counts
+    summary["verification"] = {
+        "verified": verified,
+        "failed": failed,
+        "missing": missing,
+        "status": "PASS" if failed == 0 else "FAIL",
+    }
+    store.conn.execute(
+        "UPDATE executions SET summary_json=? WHERE execution_id=?",
+        (json.dumps(summary, sort_keys=True), execution_id),
+    )
     store.conn.execute(
         "INSERT INTO verification_checks(run_id, check_name, status, detail, checked_at) VALUES (?, ?, ?, ?, ?)",
         (
@@ -824,6 +1019,7 @@ def verify_execution(
                     "failed": failed,
                     "missing": missing,
                     "mismatches": mismatches,
+                    "execution_status": execution_status,
                 },
                 sort_keys=True,
             ),
@@ -833,13 +1029,14 @@ def verify_execution(
     store.commit()
     return {
         "execution_id": execution_id,
+        "status": "PASS" if failed == 0 else "FAIL",
+        "execution_status": execution_status,
         "verified": verified,
         "failed": failed,
         "missing": missing,
         "mismatches": mismatches,
-        "status": "PASS" if failed == 0 else "FAIL",
+        "counts": counts,
     }
-
 
 def reconcile_execution(
     store: Store, execution_id: str, out_dir: str | Path
@@ -922,14 +1119,51 @@ def reconcile_execution(
         writer.writeheader()
         writer.writerows(records)
     total = len(records)
+    outcome_total = sum(outcomes.values())
+    balanced = outcome_total == total
+    required_copy = sum(1 for row in rows if row["disposition"] == "copy")
+    verified_copy = outcomes.get("copied_verified", 0)
+    authorized_excluded = outcomes.get("excluded", 0)
+    authorized_deferred = outcomes.get("deferred", 0)
+    duplicate_omitted = outcomes.get("duplicate_omitted", 0)
+    blocking_names = (
+        "failed",
+        "conflict",
+        "plan_conflict",
+        "incomplete",
+        "unclassified",
+    )
+    blocking = {name: outcomes.get(name, 0) for name in blocking_names if outcomes.get(name)}
+    successful = (
+        balanced
+        and not blocking
+        and verified_copy == required_copy
+    )
+    if not balanced:
+        assessment = "incomplete"
+    elif successful:
+        assessment = "success"
+    elif outcomes.get("incomplete"):
+        assessment = "incomplete"
+    else:
+        assessment = "failed"
     summary = {
         "execution_id": execution_id,
         "plan_id": plan["plan_id"],
         "plan_digest": plan["plan_digest"],
+        "execution_status": execution["status"],
         "total_plan_items": total,
         "outcomes": dict(outcomes),
-        "outcome_total": sum(outcomes.values()),
-        "balanced": sum(outcomes.values()) == total,
+        "outcome_total": outcome_total,
+        "balanced": balanced,
+        "successful": successful,
+        "assessment": assessment,
+        "required_copy_items": required_copy,
+        "verified_copy_items": verified_copy,
+        "authorized_excluded": authorized_excluded,
+        "authorized_deferred": authorized_deferred,
+        "duplicate_omitted": duplicate_omitted,
+        "blocking_outcomes": blocking,
         "csv": str(csv_path),
     }
     (out / f"reconciliation-{execution_id}.json").write_text(

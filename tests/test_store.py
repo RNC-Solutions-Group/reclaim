@@ -74,6 +74,61 @@ class StoreTests(unittest.TestCase):
                 self.assertEqual(counts["entries"], 0)
                 self.assertEqual(counts["hash_pending"], 0)
 
+    def test_v3_database_adds_selected_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            database = Path(tmp) / "v3.sqlite3"
+            connection = sqlite3.connect(database)
+            connection.executescript(
+                """
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE plans (
+                    plan_id TEXT PRIMARY KEY,
+                    plan_digest TEXT NOT NULL UNIQUE,
+                    plan_schema_version INTEGER NOT NULL,
+                    source_run_id TEXT NOT NULL,
+                    analysis_id TEXT NOT NULL,
+                    destination_root TEXT NOT NULL,
+                    destination_template TEXT NOT NULL,
+                    duplicate_policy TEXT NOT NULL,
+                    target_platform TEXT NOT NULL,
+                    max_path_length INTEGER NOT NULL,
+                    policy_fingerprint TEXT NOT NULL,
+                    source_snapshot_json TEXT NOT NULL,
+                    summary_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                """
+            )
+            connection.execute(
+                "INSERT INTO meta(key, value) VALUES ('schema_version', '3')"
+            )
+            connection.execute(
+                """
+                INSERT INTO plans(
+                    plan_id, plan_digest, plan_schema_version, source_run_id,
+                    analysis_id, destination_root, destination_template,
+                    duplicate_policy, target_platform, max_path_length,
+                    policy_fingerprint, source_snapshot_json, summary_json,
+                    status, created_at
+                ) VALUES (?, ?, 1, 'run', 'analysis', ?, '{rel_path}',
+                          'prefer_one', 'linux', 240, 'fp', '{}', '{}',
+                          'draft', '2026-01-01')
+                """,
+                ("plan-old", "a" * 64, str(Path(tmp) / "destination")),
+            )
+            connection.commit()
+            connection.close()
+            with Store(database) as store:
+                version = store.conn.execute(
+                    "SELECT value FROM meta WHERE key='schema_version'"
+                ).fetchone()[0]
+                self.assertEqual(version, "4")
+                row = store.conn.execute(
+                    "SELECT destination_selected, destination_root FROM plans"
+                ).fetchone()
+                self.assertEqual(row["destination_selected"], row["destination_root"])
+
     def test_cache_is_invalidated_when_source_root_changes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -197,7 +252,7 @@ class StoreTests(unittest.TestCase):
                 version = store.conn.execute(
                     "SELECT value FROM meta WHERE key='schema_version'"
                 ).fetchone()[0]
-                self.assertEqual(version, "3")
+                self.assertEqual(version, "4")
                 columns = {
                     row["name"] for row in store.conn.execute("PRAGMA table_info(hash_cache)")
                 }

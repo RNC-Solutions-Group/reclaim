@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import uuid
 from collections import Counter
 from dataclasses import dataclass
@@ -285,6 +286,7 @@ def _plan_body(
     source_run_id: str,
     analysis_id: str,
     destination_root: str,
+    destination_selected: str,
     destination_template: str,
     duplicate_policy: str,
     target_platform: str,
@@ -300,6 +302,7 @@ def _plan_body(
         "source_run_id": source_run_id,
         "analysis_id": analysis_id,
         "destination_root": destination_root,
+        "destination_selected": destination_selected,
         "destination_template": destination_template,
         "duplicate_policy": duplicate_policy,
         "target_platform": target_platform,
@@ -343,6 +346,7 @@ def recompute_plan_digest(store: Store, plan_id: str) -> str:
         source_run_id=row["source_run_id"],
         analysis_id=row["analysis_id"],
         destination_root=row["destination_root"],
+        destination_selected=row["destination_selected"],
         destination_template=row["destination_template"],
         duplicate_policy=row["duplicate_policy"],
         target_platform=row["target_platform"],
@@ -400,7 +404,8 @@ def build_plan(
     if run["status"] not in ("complete", "scanned"):
         raise PlanError(f"Run {run_id} is not complete enough to plan: {run['status']}")
 
-    destination_root = canonical_path(settings.destination_root)
+    destination_selected = Path(os.path.abspath(os.fspath(settings.destination_root)))
+    destination_root = canonical_path(destination_selected)
     target_platform = settings.target_platform or DestinationPolicy.for_host().target_platform
     destination_policy = DestinationPolicy(
         target_platform=target_platform,
@@ -409,7 +414,7 @@ def build_plan(
     )
     source_roots = [source.path for source in config.sources]
     root_issues = validate_destination_root(
-        destination_root,
+        destination_selected,
         destination_policy,
         source_roots=source_roots,
         workspace=config.workspace,
@@ -583,6 +588,7 @@ def build_plan(
         source_run_id=run_id,
         analysis_id=analysis_id,
         destination_root=str(destination_root),
+        destination_selected=str(destination_selected),
         destination_template=settings.destination_template,
         duplicate_policy=settings.duplicate_policy,
         target_platform=target_platform,
@@ -640,11 +646,11 @@ def build_plan(
         """
         INSERT INTO plans(
             plan_id, plan_digest, plan_schema_version, source_run_id,
-            analysis_id, destination_root, destination_template,
-            duplicate_policy, target_platform, max_path_length,
-            policy_fingerprint, source_snapshot_json, summary_json,
-            status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?)
+            analysis_id, destination_root, destination_selected,
+            destination_template, duplicate_policy, target_platform,
+            max_path_length, policy_fingerprint, source_snapshot_json,
+            summary_json, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?)
         """,
         (
             plan_id,
@@ -653,6 +659,7 @@ def build_plan(
             run_id,
             analysis_id,
             str(destination_root),
+            str(destination_selected),
             settings.destination_template,
             settings.duplicate_policy,
             target_platform,
@@ -858,8 +865,9 @@ def authorize_plan(
         target_platform=row["target_platform"],
         max_path_length=row["max_path_length"],
     )
+    selected = row["destination_selected"] or row["destination_root"]
     root_issues = validate_destination_root(
-        row["destination_root"],
+        selected,
         policy,
         source_roots=[source.path for source in config.sources],
         workspace=config.workspace,
@@ -869,13 +877,19 @@ def authorize_plan(
             "Destination is no longer valid: "
             + "; ".join(f"{issue.code}: {issue.message}" for issue in root_issues)
         )
+    if os.path.normcase(str(canonical_path(selected))) != os.path.normcase(
+        str(canonical_path(row["destination_root"]))
+    ):
+        raise PlanError(
+            "Destination selected path no longer resolves to the planned root"
+        )
     copy_items = [
         DestinationItem(item.item_id, item.destination_rel, item.size_bytes)
         for item in get_plan_items(store, plan_id)
         if item.disposition == "copy" and item.destination_rel
     ]
     validation = validate_plan(
-        row["destination_root"],
+        selected,
         copy_items,
         policy,
         source_roots=[source.path for source in config.sources],
@@ -934,6 +948,7 @@ def plan_preview_lines(store: Store, plan_id: str, limit: int = 40) -> list[str]
         f"digest: {row['plan_digest']}",
         f"status: {row['status']}",
         f"destination: {row['destination_root']}",
+        f"destination selected: {row['destination_selected']}",
         f"template: {row['destination_template']}",
         f"duplicate policy: {row['duplicate_policy']}",
         f"items: {summary.get('total_items', 0)}",
@@ -974,6 +989,7 @@ def export_plan(store: Store, plan_id: str, out_dir: str | Path) -> tuple[Path, 
         "source_run_id": row["source_run_id"],
         "analysis_id": row["analysis_id"],
         "destination_root": row["destination_root"],
+        "destination_selected": row["destination_selected"],
         "destination_template": row["destination_template"],
         "duplicate_policy": row["duplicate_policy"],
         "target_platform": row["target_platform"],

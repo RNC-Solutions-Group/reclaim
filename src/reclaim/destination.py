@@ -10,7 +10,6 @@ and ``publish_no_overwrite`` are execution-only helpers.
 
 from __future__ import annotations
 
-import errno
 import os
 import re
 import stat
@@ -50,6 +49,10 @@ class DestinationError(ReclaimError):
 
 class DestinationOccupied(DestinationError):
     """The destination path already exists; refusing to overwrite."""
+
+
+class DestinationUnsupported(DestinationError):
+    """Atomic no-overwrite publication is unavailable; fail closed."""
 
 
 @dataclass(frozen=True)
@@ -166,6 +169,32 @@ def name_keys(name: str, policy: DestinationPolicy) -> frozenset[str]:
     if not policy.effective_case_sensitive:
         forms = {form.casefold() for form in forms}
     return frozenset(forms)
+
+
+def component_key(segment: str, policy: DestinationPolicy) -> str:
+    """Canonical equivalence key for one target path component."""
+
+    if policy.unicode_sensitive:
+        key = segment
+    else:
+        key = unicodedata.normalize("NFC", segment)
+    if not policy.effective_case_sensitive:
+        key = key.casefold()
+    return key
+
+
+def destination_path_key(rel_path: str, policy: DestinationPolicy) -> tuple[str, ...]:
+    """Whole-path equivalence key.
+
+    Every component is normalized under the target policy, not just the final
+    filename.  This prevents differently cased or Unicode-equivalent parent
+    directories from bypassing collision detection.
+    """
+
+    return tuple(
+        component_key(segment, policy)
+        for segment in normalize_relative(rel_path).split("/")
+    )
 
 
 def _reserved_windows_name(segment: str) -> bool:
@@ -295,7 +324,13 @@ def validate_destination_root(
 def _existing_name_collision(
     root: Path, rel_path: str, policy: DestinationPolicy
 ) -> list[ValidationIssue]:
-    """Detect case/Unicode collisions with existing sibling names."""
+    """Detect case/Unicode collisions with existing path components.
+
+    Traversal uses the target policy's component key at every level, so an
+    existing ``documents`` directory is recognized as a collision for a
+    planned ``Documents`` component even when the host filesystem is
+    case-sensitive.
+    """
 
     issues: list[ValidationIssue] = []
     current = root
@@ -306,20 +341,23 @@ def _existing_name_collision(
             names = [entry.name for entry in os.scandir(current)]
         except OSError:
             break
-        target_keys = name_keys(segment, policy)
-        for existing in names:
-            if existing == segment:
-                continue
-            if name_keys(existing, policy) & target_keys:
-                issues.append(
-                    _issue(
-                        "CASE_UNICODE_COLLISION",
-                        f"{segment!r} collides with existing {existing!r}",
-                        rel=rel_path,
-                    )
+        actual = segment if segment in names else None
+        if actual is None:
+            target_key = component_key(segment, policy)
+            matches = [
+                name for name in names if component_key(name, policy) == target_key
+            ]
+            if not matches:
+                break
+            actual = matches[0]
+            issues.append(
+                _issue(
+                    "CASE_UNICODE_COLLISION",
+                    f"{segment!r} collides with existing {actual!r}",
+                    rel=rel_path,
                 )
-                return issues
-        next_path = current / segment
+            )
+        next_path = current / actual
         if not next_path.exists():
             break
         current = next_path
@@ -346,8 +384,7 @@ def validate_plan(
 
     root = canonical_path(destination_root)
     issues: list[ValidationIssue] = list(root_issues)
-    rel_set: dict[str, DestinationItem] = {}
-    destination_index: dict[tuple[str, str], DestinationItem] = {}
+    path_index: dict[tuple[str, ...], DestinationItem] = {}
 
     for item in items:
         rel_issues = validate_relative(item.rel_path, policy)
@@ -363,11 +400,13 @@ def validate_plan(
         if rel_issues:
             continue
         rel = normalize_relative(item.rel_path)
-        if rel in rel_set:
+        key = destination_path_key(rel, policy)
+        previous = path_index.get(key)
+        if previous is not None:
             issues.append(
                 _issue(
                     "DUPLICATE_DESTINATION",
-                    f"Multiple plan items target {rel!r}",
+                    f"Multiple plan items target equivalent destination {rel!r}",
                     rel=rel,
                     item_id=item.item_id,
                 )
@@ -375,28 +414,14 @@ def validate_plan(
             issues.append(
                 _issue(
                     "DUPLICATE_DESTINATION",
-                    f"Multiple plan items target {rel!r}",
+                    f"Multiple plan items target equivalent destination {rel!r}",
                     rel=rel,
-                    item_id=rel_set[rel].item_id,
+                    item_id=previous.item_id,
                 )
             )
-        rel_set[rel] = item
+        path_index[key] = item
 
         parts = rel.split("/")
-        parent = "/".join(parts[:-1])
-        for key in name_keys(parts[-1], policy):
-            other_item = destination_index.get((parent, key))
-            if other_item is not None and other_item.item_id != item.item_id:
-                issues.append(
-                    _issue(
-                        "DUPLICATE_DESTINATION",
-                        f"Destination name collides with another plan item: {rel}",
-                        rel=rel,
-                        item_id=item.item_id,
-                    )
-                )
-            destination_index[(parent, key)] = item
-
         target_path = root.joinpath(*parts)
         total_length = len(str(target_path))
         if total_length > policy.max_path_length:
@@ -456,17 +481,18 @@ def validate_plan(
             for issue in _existing_name_collision(root, rel, policy)
         )
 
-    # Prefix conflicts: a file cannot also be a directory.  Done after the
-    # first pass so plan-item order cannot hide an ancestor/descendant clash.
-    for rel, item in rel_set.items():
-        parts = rel.split("/")
-        for depth in range(1, len(parts)):
-            ancestor = "/".join(parts[:depth])
-            if ancestor in rel_set and rel_set[ancestor].item_id != item.item_id:
+    # Prefix conflicts use the same whole-path equivalence.  A planned file
+    # cannot also be a directory under any target-equivalent spelling.
+    for key, item in path_index.items():
+        for depth in range(1, len(key)):
+            ancestor = key[:depth]
+            ancestor_item = path_index.get(ancestor)
+            if ancestor_item is not None and ancestor_item.item_id != item.item_id:
+                rel = "/".join(key)
                 issues.append(
                     _issue(
                         "PATH_PREFIX_CONFLICT",
-                        f"{rel!r} uses {ancestor!r}, which is also a planned file",
+                        f"{rel!r} uses a path that is also a planned file",
                         rel=rel,
                         item_id=item.item_id,
                     )
@@ -517,43 +543,32 @@ def safe_makedirs(root: str | Path, rel_parent: str) -> Path:
 def publish_no_overwrite(temp_path: str | Path, destination: str | Path) -> None:
     """Publish a verified temp file without overwriting an existing path.
 
-    ``os.link`` provides an atomic no-replace publication on filesystems that
-    support hard links.  A conservative fallback reserves the final name with
-    ``O_EXCL`` and then replaces only that reservation.
+    ``os.link`` is used as an atomic no-replace publication primitive.  If the
+    filesystem/platform cannot provide hard-link publication, the operation
+    fails closed with :class:`DestinationUnsupported`; it never degrades to an
+    overwrite-capable rename/replace sequence.
     """
 
     temp = Path(temp_path)
     dest = Path(destination)
     try:
-        os.link(temp, dest)
-    except FileExistsError as exc:
-        raise DestinationOccupied(f"Destination appeared during execution: {dest}") from exc
-    except OSError as exc:
-        if exc.errno not in {
-            errno.EPERM,
-            errno.EACCES,
-            errno.ENOTSUP,
-            errno.EOPNOTSUPP,
-            errno.EXDEV,
-            errno.EINVAL,
-        }:
-            raise
         try:
-            fd = os.open(dest, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
-        except FileExistsError as exists:
+            os.link(temp, dest)
+        except FileExistsError as exc:
             raise DestinationOccupied(
                 f"Destination appeared during execution: {dest}"
-            ) from exists
-        else:
-            os.close(fd)
-        os.replace(temp, dest)
-        temp = None  # type: ignore[assignment]
+            ) from exc
+        except OSError as exc:
+            raise DestinationUnsupported(
+                "Atomic no-overwrite publication is unavailable for this "
+                f"destination ({exc.strerror or exc}); refusing to use an "
+                "overwrite-capable fallback"
+            ) from exc
     finally:
-        if temp is not None:
-            try:
-                Path(temp).unlink()
-            except FileNotFoundError:
-                pass
+        try:
+            temp.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def ensure_destination_is_safe_child(root: Path, candidate: Path) -> None:

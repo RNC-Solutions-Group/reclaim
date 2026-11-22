@@ -53,6 +53,10 @@ These capabilities define architectural direction; **do not implement all of the
 - Handle inaccessible files, interrupted reads, changing files, missing volumes, cloud-only placeholders, empty directories, unusual encodings, long paths, and filesystem errors explicitly.
 - Account for Windows/macOS/Linux differences, including case sensitivity, Unicode normalization, reserved names, path lengths, permissions, links, and filesystem timestamp behavior.
 - Never silently overwrite conflicting destination files. Design execution for journaling, safe resumption, validated destinations, copy verification, and clear failure reporting.
+- Destination publication must use an atomic no-overwrite primitive where available; if equivalent guarantees cannot be provided, fail closed rather than degrading to an overwrite-capable rename/replace.
+- Post-execution verification must move missing, unreadable, or corrupted destinations out of a successful state and persist the failure. A previously verified item cannot remain "verified" after verification disproves it.
+- Reconciliation must distinguish accounting completeness (`balanced`) from successful migration (`successful`); a balanced report with failed/conflicting items is not success.
+- CLI commands must expose stable nonzero exit codes for failure, incomplete execution, verification failure, and unsuccessful reconciliation so automation does not parse human-readable prose.
 - Do not auto-execute downloaded files, follow internet shortcuts, or unpack untrusted archives as a side effect of discovery. Archive inspection or content extraction must have deliberate limits and appropriate safeguards.
 
 ## Classification and Disposition Model

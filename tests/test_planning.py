@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from .helpers import make_junction
 from .m1_helpers import create_project
 
 from reclaim.execution import (
@@ -16,8 +17,10 @@ from reclaim.execution import (
 )
 from reclaim.planning import (
     PlanError,
+    PlanSettings,
     add_override,
     authorize_plan,
+    build_plan,
     recompute_plan_digest,
 )
 
@@ -269,6 +272,8 @@ class ExecutionTests(unittest.TestCase):
             project.store, execution.execution_id, Path(self.tmp.name) / "recon"
         )
         self.assertTrue(reconciliation["balanced"])
+        self.assertTrue(reconciliation["successful"])
+        self.assertEqual(reconciliation["assessment"], "success")
         self.assertEqual(reconciliation["outcome_total"], result.summary["total_items"])
         self.assertEqual(
             reconciliation["outcomes"].get("copied_verified"),
@@ -293,6 +298,12 @@ class ExecutionTests(unittest.TestCase):
         self.assertEqual(execution.status, "complete_with_failures")
         self.assertEqual(target.read_bytes(), b"existing")
         self.assertEqual(execution.summary["counts"].get("conflict"), 1)
+        reconciliation = reconcile_execution(
+            project.store, execution.execution_id, Path(self.tmp.name) / "recon-conflict"
+        )
+        self.assertTrue(reconciliation["balanced"])
+        self.assertFalse(reconciliation["successful"])
+        self.assertEqual(reconciliation["outcomes"].get("conflict"), 1)
 
     def test_source_change_after_authorization_blocks_execution(self) -> None:
         project = self._project(
@@ -339,7 +350,103 @@ class ExecutionTests(unittest.TestCase):
             project.store, execution.execution_id, Path(self.tmp.name) / "recon3"
         )
         self.assertTrue(reconciliation["balanced"])
+        self.assertFalse(reconciliation["successful"])
         self.assertEqual(reconciliation["outcomes"].get("failed"), 1)
+
+    def test_all_items_failed_is_balanced_but_not_successful(self) -> None:
+        from unittest import mock
+
+        project = self._project(
+            {
+                "source-a": {
+                    "Documents/a.pdf": b"a",
+                    "Documents/b.pdf": b"b",
+                }
+            }
+        )
+        result = self._plan()
+        with mock.patch(
+            "reclaim.execution.publish_no_overwrite",
+            side_effect=OSError("simulated failure"),
+        ):
+            execution = execute_plan(
+                project.store, project.config, result.plan_id, result.plan_digest
+            )
+        reconciliation = reconcile_execution(
+            project.store, execution.execution_id, Path(self.tmp.name) / "recon-all-failed"
+        )
+        self.assertTrue(reconciliation["balanced"])
+        self.assertFalse(reconciliation["successful"])
+        self.assertEqual(reconciliation["required_copy_items"], 2)
+        self.assertEqual(reconciliation["verified_copy_items"], 0)
+        self.assertEqual(reconciliation["outcomes"].get("failed"), 2)
+
+    def test_authorized_exclusions_and_deferrals_are_successful(self) -> None:
+        project = self._project(
+            {
+                "source-a": {
+                    "Documents/keep.txt": b"keep",
+                    "Documents/exclude.txt": b"exclude",
+                    "Documents/defer.txt": b"defer",
+                }
+            }
+        )
+        add_override(
+            project.store,
+            scope="file",
+            source_id="source-a",
+            target_rel="Documents/exclude.txt",
+            disposition="exclude",
+            reason="authorized exclusion",
+        )
+        add_override(
+            project.store,
+            scope="file",
+            source_id="source-a",
+            target_rel="Documents/defer.txt",
+            disposition="defer",
+            reason="authorized deferral",
+        )
+        result = self._plan()
+        execution = execute_plan(
+            project.store, project.config, result.plan_id, result.plan_digest
+        )
+        reconciliation = reconcile_execution(
+            project.store, execution.execution_id, Path(self.tmp.name) / "recon-authorized"
+        )
+        self.assertTrue(reconciliation["balanced"])
+        self.assertTrue(reconciliation["successful"])
+        self.assertEqual(reconciliation["assessment"], "success")
+        self.assertEqual(reconciliation["authorized_excluded"], 1)
+        self.assertEqual(reconciliation["authorized_deferred"], 1)
+        self.assertEqual(reconciliation["verified_copy_items"], 1)
+        self.assertEqual(reconciliation["required_copy_items"], 1)
+
+    def test_incomplete_execution_is_not_successful(self) -> None:
+        project = self._project(
+            {
+                "source-a": {
+                    "Documents/a.pdf": b"a",
+                    "Documents/b.pdf": b"b",
+                }
+            }
+        )
+        result = self._plan()
+        execution = execute_plan(
+            project.store,
+            project.config,
+            result.plan_id,
+            result.plan_digest,
+            max_items=1,
+        )
+        self.assertEqual(execution.status, "paused")
+        reconciliation = reconcile_execution(
+            project.store, execution.execution_id, Path(self.tmp.name) / "recon-incomplete"
+        )
+        self.assertTrue(reconciliation["balanced"])
+        self.assertFalse(reconciliation["successful"])
+        self.assertEqual(reconciliation["assessment"], "incomplete")
+        self.assertEqual(reconciliation["outcomes"].get("incomplete"), 1)
 
     def test_interrupted_execution_resumes(self) -> None:
         project = self._project(
@@ -384,6 +491,184 @@ class ExecutionTests(unittest.TestCase):
         )
         self.assertEqual(verification["status"], "FAIL")
         self.assertEqual(verification["failed"], 1)
+        self.assertEqual(verification["execution_status"], "verification_failed")
+        reconciliation = reconcile_execution(
+            project.store, execution.execution_id, Path(self.tmp.name) / "recon-tamper"
+        )
+        self.assertFalse(reconciliation["successful"])
+        self.assertEqual(reconciliation["outcomes"].get("failed"), 1)
+
+    def test_missing_destination_is_failed_and_reconciled(self) -> None:
+        project = self._project(
+            {
+                "source-a": {
+                    "Documents/a.pdf": b"a",
+                    "Documents/b.pdf": b"b",
+                }
+            }
+        )
+        result = self._plan()
+        execution = execute_plan(
+            project.store, project.config, result.plan_id, result.plan_digest
+        )
+        missing = project.destination / "source-a" / "Documents" / "a.pdf"
+        missing.unlink()
+        first = verify_execution(
+            project.store, project.config, execution.execution_id
+        )
+        self.assertEqual(first["status"], "FAIL")
+        self.assertEqual(first["missing"], 1)
+        self.assertEqual(first["execution_status"], "verification_failed")
+        state = project.store.conn.execute(
+            """
+            SELECT i.state, i.error_code
+            FROM execution_items i JOIN plan_items p
+              ON p.plan_id=? AND p.item_id=i.item_id
+            WHERE i.execution_id=? AND p.source_rel_path='Documents/a.pdf'
+            """,
+            (result.plan_id, execution.execution_id),
+        ).fetchone()
+        self.assertEqual(state["state"], "failed")
+        self.assertEqual(state["error_code"], "DESTINATION_MISSING")
+        reconciliation = reconcile_execution(
+            project.store, execution.execution_id, Path(self.tmp.name) / "recon-missing"
+        )
+        self.assertTrue(reconciliation["balanced"])
+        self.assertFalse(reconciliation["successful"])
+        self.assertEqual(reconciliation["outcomes"].get("failed"), 1)
+        second = verify_execution(
+            project.store, project.config, execution.execution_id
+        )
+        self.assertEqual(second["status"], "FAIL")
+        self.assertEqual(second["missing"], 1)
+        self.assertEqual(second["execution_status"], "verification_failed")
+
+    def test_verify_recovers_after_missing_destination_is_restored(self) -> None:
+        project = self._project(
+            {"source-a": {"Documents/a.pdf": b"a"}}
+        )
+        result = self._plan()
+        execution = execute_plan(
+            project.store, project.config, result.plan_id, result.plan_digest
+        )
+        destination = project.destination / "source-a" / "Documents" / "a.pdf"
+        destination.unlink()
+        self.assertEqual(
+            verify_execution(project.store, project.config, execution.execution_id)["status"],
+            "FAIL",
+        )
+        destination.write_bytes(b"a")
+        recovered = verify_execution(
+            project.store, project.config, execution.execution_id
+        )
+        self.assertEqual(recovered["status"], "PASS")
+        self.assertEqual(recovered["verified"], 1)
+        self.assertEqual(recovered["execution_status"], "complete")
+        reconciliation = reconcile_execution(
+            project.store, execution.execution_id, Path(self.tmp.name) / "recon-recovered"
+        )
+        self.assertTrue(reconciliation["successful"])
+
+    def test_retry_after_publication_failure_is_idempotent(self) -> None:
+        from unittest import mock
+
+        project = self._project(
+            {"source-a": {"Documents/a.pdf": b"a"}}
+        )
+        result = self._plan()
+        with mock.patch(
+            "reclaim.execution.publish_no_overwrite",
+            side_effect=OSError("simulated failure"),
+        ):
+            first = execute_plan(
+                project.store, project.config, result.plan_id, result.plan_digest
+            )
+        self.assertEqual(first.status, "complete_with_failures")
+        second = execute_plan(
+            project.store, project.config, result.plan_id, result.plan_digest
+        )
+        self.assertEqual(second.status, "complete")
+        self.assertNotEqual(first.execution_id, second.execution_id)
+        self.assertEqual(len(project.destination_files()), 1)
+        reconciliation = reconcile_execution(
+            project.store, second.execution_id, Path(self.tmp.name) / "recon-retry"
+        )
+        self.assertTrue(reconciliation["successful"])
+
+    def test_unreadable_destination_is_failed(self) -> None:
+        from unittest import mock
+
+        from reclaim import execution as execution_module
+
+        project = self._project(
+            {"source-a": {"Documents/one.pdf": b"same"}}
+        )
+        result = self._plan()
+        execution = execute_plan(
+            project.store, project.config, result.plan_id, result.plan_digest
+        )
+        original = execution_module._sha256_file
+
+        def broken(path):
+            if Path(path).name == "one.pdf":
+                raise PermissionError("simulated unreadable destination")
+            return original(path)
+
+        with mock.patch("reclaim.execution._sha256_file", side_effect=broken):
+            verification = verify_execution(
+                project.store, project.config, execution.execution_id
+            )
+        self.assertEqual(verification["status"], "FAIL")
+        self.assertEqual(verification["failed"], 1)
+        row = project.store.conn.execute(
+            "SELECT state, error_code FROM execution_items WHERE execution_id=?",
+            (execution.execution_id,),
+        ).fetchone()
+        self.assertEqual(row["state"], "failed")
+        self.assertEqual(row["error_code"], "DESTINATION_UNREADABLE")
+
+    def test_preexisting_matching_destination_is_not_adopted(self) -> None:
+        project = self._project(
+            {"source-a": {"Documents/one.pdf": b"same"}}
+        )
+        result = self._plan()
+        target = project.destination / "source-a" / "Documents" / "one.pdf"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"same")
+        execution = execute_plan(
+            project.store, project.config, result.plan_id, result.plan_digest
+        )
+        self.assertEqual(execution.status, "complete_with_failures")
+        self.assertEqual(execution.summary["counts"].get("conflict"), 1)
+        self.assertEqual(target.read_bytes(), b"same")
+
+    def test_publication_unsupported_marks_failure(self) -> None:
+        from unittest import mock
+
+        from reclaim.destination import DestinationUnsupported
+
+        project = self._project(
+            {"source-a": {"Documents/one.pdf": b"same"}}
+        )
+        result = self._plan()
+        with mock.patch(
+            "reclaim.execution.publish_no_overwrite",
+            side_effect=DestinationUnsupported("simulated unsupported filesystem"),
+        ):
+            execution = execute_plan(
+                project.store, project.config, result.plan_id, result.plan_digest
+            )
+        self.assertEqual(execution.status, "complete_with_failures")
+        row = project.store.conn.execute(
+            "SELECT error_code FROM execution_items WHERE execution_id=?",
+            (execution.execution_id,),
+        ).fetchone()
+        self.assertEqual(row["error_code"], "PUBLICATION_UNSUPPORTED")
+        reconciliation = reconcile_execution(
+            project.store, execution.execution_id, Path(self.tmp.name) / "recon-unsupported"
+        )
+        self.assertFalse(reconciliation["successful"])
+        self.assertEqual(reconciliation["outcomes"].get("failed"), 1)
 
     def test_dry_run_and_preview_do_not_write(self) -> None:
         project = self._project(
@@ -488,6 +773,7 @@ class ExecutionTests(unittest.TestCase):
             project.store, execution.execution_id, Path(self.tmp.name) / "recon2"
         )
         self.assertTrue(reconciliation["balanced"])
+        self.assertFalse(reconciliation["successful"])
         self.assertEqual(reconciliation["outcomes"].get("failed"), 1)
 
     def test_case_collision_in_merged_plan_is_conflict(self) -> None:
@@ -513,6 +799,62 @@ class ExecutionTests(unittest.TestCase):
         )
         result = project.build(template="../{rel_path}")
         self.assertGreaterEqual(result.summary["conflicts"], 1)
+
+    def test_redirected_destination_root_is_rejected(self) -> None:
+        project = self._project(
+            {"source-a": {"Documents/one.pdf": b"same"}}
+        )
+        target = Path(self.tmp.name) / "real-destination"
+        target.mkdir()
+        link = Path(self.tmp.name) / "linked-destination"
+        if not make_junction(link, target):
+            self.skipTest("junction/symlink creation not permitted")
+        with self.assertRaises(PlanError):
+            build_plan(
+                project.store,
+                project.config,
+                project.policy,
+                project.profile,
+                project.run_id,
+                PlanSettings(destination_root=link),
+            )
+
+    def test_redirected_destination_parent_is_rejected(self) -> None:
+        project = self._project(
+            {"source-a": {"Documents/one.pdf": b"same"}}
+        )
+        real_parent = Path(self.tmp.name) / "real-parent"
+        real_parent.mkdir()
+        (real_parent / "destination").mkdir()
+        link_parent = Path(self.tmp.name) / "redirected-parent"
+        if not make_junction(link_parent, real_parent):
+            self.skipTest("junction/symlink creation not permitted")
+        with self.assertRaises(PlanError):
+            build_plan(
+                project.store,
+                project.config,
+                project.policy,
+                project.profile,
+                project.run_id,
+                PlanSettings(destination_root=link_parent / "destination"),
+            )
+
+    def test_destination_change_after_planning_blocks_authorization(self) -> None:
+        project = self._project(
+            {"source-a": {"Documents/one.pdf": b"same"}}
+        )
+        result = project.build()
+        real = Path(self.tmp.name) / "moved-destination"
+        project.destination.rename(real)
+        if not make_junction(project.destination, real):
+            self.skipTest("junction/symlink creation not permitted")
+        with self.assertRaises(PlanError):
+            authorize_plan(
+                project.store,
+                project.config,
+                result.plan_id,
+                result.plan_digest,
+            )
 
 
 if __name__ == "__main__":

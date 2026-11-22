@@ -22,7 +22,7 @@ from .hashing import HashOutcome
 from .paths import canonical_path, root_identity
 from .scanner import EntryRecord
 
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 ALGORITHM = "sha256"
 
 
@@ -185,6 +185,7 @@ CREATE TABLE IF NOT EXISTS plans (
     source_run_id TEXT NOT NULL,
     analysis_id TEXT NOT NULL,
     destination_root TEXT NOT NULL,
+    destination_selected TEXT NOT NULL,
     destination_template TEXT NOT NULL,
     duplicate_policy TEXT NOT NULL,
     target_platform TEXT NOT NULL,
@@ -327,8 +328,12 @@ class Store:
         elif row["value"] == "1":
             self._migrate_v1_to_v2()
             self._migrate_v2_to_v3()
+            self._migrate_v3_to_v4()
         elif row["value"] == "2":
             self._migrate_v2_to_v3()
+            self._migrate_v3_to_v4()
+        elif row["value"] == "3":
+            self._migrate_v3_to_v4()
         elif row["value"] != SCHEMA_VERSION:
             raise SchemaError(
                 f"Database schema {row['value']} is not supported by this build "
@@ -390,11 +395,35 @@ class Store:
 
         self.conn.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?)",
-            (SCHEMA_VERSION,),
+            ("3",),
         )
         self.conn.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES ('m1_schema_migration', ?)",
             ("M1 planning, override, execution, journal, and reconciliation tables added",),
+        )
+        self.conn.commit()
+
+    def _migrate_v3_to_v4(self) -> None:
+        """Add the raw selected destination path for redirection validation."""
+
+        columns = {
+            row["name"] for row in self.conn.execute("PRAGMA table_info(plans)")
+        }
+        if "destination_selected" not in columns:
+            self.conn.execute(
+                "ALTER TABLE plans ADD COLUMN destination_selected TEXT NOT NULL DEFAULT ''"
+            )
+        self.conn.execute(
+            "UPDATE plans SET destination_selected=destination_root "
+            "WHERE destination_selected=''"
+        )
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?)",
+            (SCHEMA_VERSION,),
+        )
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('m1a_destination_selected', ?)",
+            ("raw selected destination path recorded separately from canonical root",),
         )
         self.conn.commit()
 
