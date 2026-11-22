@@ -5,6 +5,11 @@
 *.sqlite3-shm
 /reclaim-work/
 /projects/
+/test-artifacts/
+/tmp/
+/benchmark-output/
+/plans/
+/reconciliation/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

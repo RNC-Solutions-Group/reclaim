@@ -31,6 +31,21 @@ from .report import (
 )
 from .scanner import SourceFingerprint, SourceScanner
 from .store import Store
+from .planning import (
+    PlanSettings,
+    add_override,
+    authorize_plan,
+    build_plan,
+    export_plan,
+    list_overrides,
+    plan_preview_lines,
+    remove_override,
+)
+from .execution import (
+    execute_plan,
+    reconcile_execution,
+    verify_execution,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -74,10 +89,74 @@ def main(argv: list[str] | None = None) -> int:
     status.add_argument("--run", default=None)
     status.set_defaults(func=command_status)
 
+    plan = subcommands.add_parser("plan", help="Build an immutable migration plan (no destination writes)")
+    plan.add_argument("--config", required=True)
+    plan.add_argument("--run", default=None)
+    plan.add_argument("--destination", required=True, help="Existing destination root")
+    plan.add_argument("--template", default="{source_id}/{rel_path}")
+    plan.add_argument("--duplicate-policy", choices=("prefer_one", "keep_all", "fail"), default="prefer_one")
+    plan.add_argument("--target-platform", choices=("windows", "macos", "linux"), default=None)
+    plan.add_argument("--max-path-length", type=int, default=240)
+    plan.add_argument("--out", default=None, help="Plan export directory (default: workspace/plans)")
+    plan.set_defaults(func=command_plan)
+
+    preview = subcommands.add_parser("preview", help="Preview a migration plan without writing the destination")
+    preview.add_argument("--config", required=True)
+    preview.add_argument("--plan", required=True)
+    preview.add_argument("--limit", type=int, default=40)
+    preview.set_defaults(func=command_preview)
+
+    authorize = subcommands.add_parser("authorize", help="Authorize an exact plan digest")
+    authorize.add_argument("--config", required=True)
+    authorize.add_argument("--plan", required=True)
+    authorize.add_argument("--digest", required=True)
+    authorize.add_argument("--actor", default="operator")
+    authorize.add_argument("--note", default=None)
+    authorize.set_defaults(func=command_authorize)
+
+    execute = subcommands.add_parser("execute", help="Execute an authorized plan, or dry-run it")
+    execute.add_argument("--config", required=True)
+    execute.add_argument("--plan", required=True)
+    execute.add_argument("--digest", required=True)
+    execute.add_argument("--dry-run", action="store_true")
+    execute.add_argument("--max-items", type=int, default=None, help="Stop after N items (testing/resume)")
+    execute.add_argument("--no-retry-failed", action="store_true")
+    execute.set_defaults(func=command_execute)
+
+    verify_exec = subcommands.add_parser("verify-execution", help="Re-hash destination files for an execution")
+    verify_exec.add_argument("--config", required=True)
+    verify_exec.add_argument("--execution", required=True)
+    verify_exec.set_defaults(func=command_verify_execution)
+
+    reconcile = subcommands.add_parser("reconcile", help="Write a reconciliation report for an execution")
+    reconcile.add_argument("--config", required=True)
+    reconcile.add_argument("--execution", required=True)
+    reconcile.add_argument("--out", default=None)
+    reconcile.set_defaults(func=command_reconcile)
+
+    override = subcommands.add_parser("override", help="Manage explicit file/directory overrides")
+    override_sub = override.add_subparsers(dest="override_command", required=True)
+    override_add = override_sub.add_parser("add")
+    override_add.add_argument("--config", required=True)
+    override_add.add_argument("--source", required=True)
+    override_add.add_argument("--path", required=True)
+    override_add.add_argument("--disposition", choices=("copy", "exclude", "defer", "duplicate_omit"), required=True)
+    override_add.add_argument("--reason", required=True)
+    override_add.add_argument("--destination", default=None)
+    override_add.add_argument("--directory", action="store_true")
+    override_add.set_defaults(func=command_override_add)
+    override_list = override_sub.add_parser("list")
+    override_list.add_argument("--config", required=True)
+    override_list.set_defaults(func=command_override_list)
+    override_remove = override_sub.add_parser("remove")
+    override_remove.add_argument("--config", required=True)
+    override_remove.add_argument("--id", required=True)
+    override_remove.set_defaults(func=command_override_remove)
+
     args = parser.parse_args(argv)
     try:
         return int(args.func(args))
-    except ReclaimError as exc:
+    except (ReclaimError, ValueError) as exc:
         print(f"reclaim: error: {exc}", file=sys.stderr)
         return 2
 
@@ -511,6 +590,143 @@ def command_status(args: argparse.Namespace) -> int:
         print(f"finished:   {run['finished_at']}")
         for key in sorted(counts):
             print(f"{key:18} {counts[key]:,}")
+    return 0
+
+
+def command_plan(args: argparse.Namespace) -> int:
+    config = _config(args)
+    profile, policy = _profiles(config)
+    with _store(config) as store:
+        run_id = _run_id(store, args.run, config)
+        settings = PlanSettings(
+            destination_root=Path(args.destination),
+            destination_template=args.template,
+            duplicate_policy=args.duplicate_policy,
+            target_platform=args.target_platform,
+            max_path_length=args.max_path_length,
+        )
+        result = build_plan(
+            store, config, policy, profile, run_id, settings
+        )
+        out_dir = Path(args.out) if args.out else config.workspace / "plans"
+        manifest, items_path = export_plan(store, result.plan_id, out_dir)
+        print(f"plan:   {result.plan_id}")
+        print(f"digest: {result.plan_digest}")
+        print(f"created: {result.created}")
+        print(
+            f"summary: items={result.summary['total_items']} "
+            f"copy={result.summary['copy_items']} "
+            f"copy_bytes={result.summary['copy_bytes']} "
+            f"conflicts={result.summary['conflicts']}"
+        )
+        print(f"plan manifest: {manifest}")
+        print(f"plan items:    {items_path}")
+        print()
+        for line in plan_preview_lines(store, result.plan_id, limit=20):
+            print(line)
+    return 0
+
+
+def command_preview(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with _store(config) as store:
+        for line in plan_preview_lines(store, args.plan, limit=args.limit):
+            print(line)
+    return 0
+
+
+def command_authorize(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with _store(config) as store:
+        authorization_id = authorize_plan(
+            store,
+            config,
+            args.plan,
+            args.digest,
+            actor=args.actor,
+            notes=args.note,
+        )
+        print(f"authorized: {authorization_id}")
+        print(f"plan:       {args.plan}")
+        print(f"digest:     {args.digest}")
+    return 0
+
+
+def command_execute(args: argparse.Namespace) -> int:
+    if args.max_items is not None and args.max_items < 1:
+        raise ReclaimError("--max-items must be at least 1")
+    config = _config(args)
+    with _store(config) as store:
+        result = execute_plan(
+            store,
+            config,
+            args.plan,
+            args.digest,
+            dry_run_mode=args.dry_run,
+            max_items=args.max_items,
+            retry_failed=not args.no_retry_failed,
+        )
+        print(f"execution: {result.execution_id or '(dry run)'}")
+        print(f"plan:      {result.plan_id}")
+        print(f"status:    {result.status}")
+        print(json.dumps(result.summary, indent=2, sort_keys=True, default=str))
+    return 0
+
+
+def command_verify_execution(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with _store(config) as store:
+        result = verify_execution(store, config, args.execution)
+        print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
+def command_reconcile(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with _store(config) as store:
+        out_dir = Path(args.out) if args.out else config.workspace / "reconciliation"
+        summary = reconcile_execution(store, args.execution, out_dir)
+        print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0
+
+
+def command_override_add(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with _store(config) as store:
+        override_id = add_override(
+            store,
+            scope="directory" if args.directory else "file",
+            source_id=args.source,
+            target_rel=args.path,
+            disposition=args.disposition,
+            reason=args.reason,
+            destination_rel=args.destination,
+        )
+        print(f"override: {override_id}")
+    return 0
+
+
+def command_override_list(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with _store(config) as store:
+        rows = list_overrides(store)
+        if not rows:
+            print("no active overrides")
+            return 0
+        for row in rows:
+            print(
+                f"{row['override_id']}  {row['scope']:9} "
+                f"{row['source_id']}:{row['target_rel']} -> {row['disposition']} "
+                f"({row['reason']})"
+            )
+    return 0
+
+
+def command_override_remove(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with _store(config) as store:
+        remove_override(store, args.id)
+        print(f"removed: {args.id}")
     return 0
 
 

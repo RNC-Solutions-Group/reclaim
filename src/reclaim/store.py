@@ -20,9 +20,9 @@ from . import __version__
 from .errors import SchemaError
 from .hashing import HashOutcome
 from .paths import canonical_path, root_identity
-from .scanner import EntryRecord, SourceFingerprint
+from .scanner import EntryRecord
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 ALGORITHM = "sha256"
 
 
@@ -142,6 +142,126 @@ CREATE TABLE IF NOT EXISTS verification_checks (
     checked_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS analysis_snapshots (
+    analysis_id TEXT PRIMARY KEY,
+    source_run_id TEXT NOT NULL REFERENCES scan_runs(run_id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    tool_version TEXT NOT NULL,
+    policy_fingerprint TEXT NOT NULL,
+    metrics_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS recommendations (
+    analysis_id TEXT NOT NULL REFERENCES analysis_snapshots(analysis_id) ON DELETE CASCADE,
+    entry_id INTEGER NOT NULL REFERENCES entries(entry_id) ON DELETE CASCADE,
+    disposition TEXT NOT NULL,
+    destination_rel TEXT,
+    rule_id TEXT NOT NULL,
+    rationale TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    duplicate_role TEXT,
+    duplicate_group TEXT,
+    canonical_entry_id INTEGER,
+    PRIMARY KEY (analysis_id, entry_id)
+);
+
+CREATE TABLE IF NOT EXISTS overrides (
+    override_id TEXT PRIMARY KEY,
+    scope TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    target_rel TEXT NOT NULL,
+    disposition TEXT NOT NULL,
+    destination_rel TEXT,
+    reason TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    superseded_by TEXT
+);
+
+CREATE TABLE IF NOT EXISTS plans (
+    plan_id TEXT PRIMARY KEY,
+    plan_digest TEXT NOT NULL UNIQUE,
+    plan_schema_version INTEGER NOT NULL,
+    source_run_id TEXT NOT NULL,
+    analysis_id TEXT NOT NULL,
+    destination_root TEXT NOT NULL,
+    destination_template TEXT NOT NULL,
+    duplicate_policy TEXT NOT NULL,
+    target_platform TEXT NOT NULL,
+    max_path_length INTEGER NOT NULL,
+    policy_fingerprint TEXT NOT NULL,
+    source_snapshot_json TEXT NOT NULL,
+    summary_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS plan_items (
+    plan_id TEXT NOT NULL REFERENCES plans(plan_id) ON DELETE CASCADE,
+    item_id INTEGER NOT NULL,
+    entry_id INTEGER NOT NULL,
+    source_id TEXT NOT NULL,
+    source_rel_path TEXT NOT NULL,
+    source_root_identity TEXT NOT NULL,
+    disposition TEXT NOT NULL,
+    destination_rel TEXT,
+    expected_sha256 TEXT,
+    size_bytes INTEGER NOT NULL,
+    source_mtime_ns INTEGER,
+    canonical_entry_id INTEGER,
+    decision_source TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    PRIMARY KEY (plan_id, item_id)
+);
+
+CREATE TABLE IF NOT EXISTS plan_authorizations (
+    authorization_id TEXT PRIMARY KEY,
+    plan_id TEXT NOT NULL REFERENCES plans(plan_id) ON DELETE CASCADE,
+    plan_digest TEXT NOT NULL,
+    destination_root TEXT NOT NULL,
+    authorized_at TEXT NOT NULL,
+    authorized_by TEXT NOT NULL,
+    notes TEXT
+);
+
+CREATE TABLE IF NOT EXISTS executions (
+    execution_id TEXT PRIMARY KEY,
+    plan_id TEXT NOT NULL REFERENCES plans(plan_id) ON DELETE CASCADE,
+    plan_digest TEXT NOT NULL,
+    destination_root TEXT NOT NULL,
+    status TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    summary_json TEXT
+);
+
+CREATE TABLE IF NOT EXISTS execution_items (
+    execution_item_id INTEGER PRIMARY KEY,
+    execution_id TEXT NOT NULL REFERENCES executions(execution_id) ON DELETE CASCADE,
+    item_id INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    destination_rel TEXT,
+    expected_sha256 TEXT,
+    actual_sha256 TEXT,
+    bytes_copied INTEGER,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    error_code TEXT,
+    error_message TEXT,
+    started_at TEXT,
+    finished_at TEXT,
+    UNIQUE (execution_id, item_id)
+);
+
+CREATE TABLE IF NOT EXISTS execution_events (
+    event_id INTEGER PRIMARY KEY,
+    execution_id TEXT NOT NULL REFERENCES executions(execution_id) ON DELETE CASCADE,
+    item_id INTEGER,
+    sequence INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,
+    detail_json TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_entries_run_source
     ON entries(run_id, source_id);
 CREATE INDEX IF NOT EXISTS idx_entries_run_parent
@@ -155,6 +275,20 @@ CREATE INDEX IF NOT EXISTS idx_entries_run_media
 CREATE INDEX IF NOT EXISTS idx_hashes_digest ON hashes(digest);
 CREATE INDEX IF NOT EXISTS idx_hashes_status ON hashes(status);
 CREATE INDEX IF NOT EXISTS idx_scan_errors_run ON scan_errors(run_id);
+CREATE INDEX IF NOT EXISTS idx_recommendations_entry
+    ON recommendations(entry_id);
+CREATE INDEX IF NOT EXISTS idx_overrides_target
+    ON overrides(active, source_id, scope, target_rel);
+CREATE INDEX IF NOT EXISTS idx_plan_items_plan
+    ON plan_items(plan_id, item_id);
+CREATE INDEX IF NOT EXISTS idx_plan_authorizations_plan
+    ON plan_authorizations(plan_id, plan_digest);
+CREATE INDEX IF NOT EXISTS idx_executions_plan
+    ON executions(plan_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_execution_items_execution
+    ON execution_items(execution_id, item_id);
+CREATE INDEX IF NOT EXISTS idx_execution_events_execution
+    ON execution_events(execution_id, sequence);
 """
 
 
@@ -192,6 +326,9 @@ class Store:
             )
         elif row["value"] == "1":
             self._migrate_v1_to_v2()
+            self._migrate_v2_to_v3()
+        elif row["value"] == "2":
+            self._migrate_v2_to_v3()
         elif row["value"] != SCHEMA_VERSION:
             raise SchemaError(
                 f"Database schema {row['value']} is not supported by this build "
@@ -236,11 +373,28 @@ class Store:
             )
         self.conn.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?)",
-            (SCHEMA_VERSION,),
+            ("2",),
         )
         self.conn.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES ('cache_identity_migration', ?)",
             ("v1 cache keys lacked root identity; cache entries invalidated",),
+        )
+        self.conn.commit()
+
+    def _migrate_v2_to_v3(self) -> None:
+        """Add the M1 analysis, override, plan, and execution tables.
+
+        The tables are created by ``SCHEMA`` using ``CREATE TABLE IF NOT
+        EXISTS``; this migration records the version and a human-readable note.
+        """
+
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?)",
+            (SCHEMA_VERSION,),
+        )
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('m1_schema_migration', ?)",
+            ("M1 planning, override, execution, journal, and reconciliation tables added",),
         )
         self.conn.commit()
 

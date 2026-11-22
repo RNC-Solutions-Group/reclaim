@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reclaim"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local-first file discovery, reconciliation, and migration planning."
 readme = "README.md"
 requires-python = ">=3.11"

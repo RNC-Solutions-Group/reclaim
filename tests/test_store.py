@@ -197,7 +197,7 @@ class StoreTests(unittest.TestCase):
                 version = store.conn.execute(
                     "SELECT value FROM meta WHERE key='schema_version'"
                 ).fetchone()[0]
-                self.assertEqual(version, "2")
+                self.assertEqual(version, "3")
                 columns = {
                     row["name"] for row in store.conn.execute("PRAGMA table_info(hash_cache)")
                 }
