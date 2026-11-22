@@ -1,7 +1,7 @@
 # M1 — Migration Spine and Plan Contract
 
 **Status:** M1A corrective hardening complete on `feat/m1`; operator review
-pending. 112 tests pass. See the
+pending. 113 tests pass. See the
 [test matrix](test-matrix.md) for acceptance evidence and explicit limitations.
 **Scope:** Deterministic planning, preview, authorization, journaled copy,
 verification, resume, and reconciliation using synthetic data only.

@@ -156,7 +156,7 @@ precedence, cache reuse, and an end-to-end scan/hash/export run. M1 adds
 destination policy, whole-path equivalence, plan determinism, authorization
 invalidation, journaled execution, resume, no-overwrite/publication failure,
 source-change, destination-race, verification invalidation/recovery, and
-balanced-vs-successful reconciliation tests. **112 tests pass** on the M1A
+balanced-vs-successful reconciliation tests. **113 tests pass** on the M1A
 branch. Tests that require junction creation are skipped on platforms where the
 process is not permitted to create one.
 

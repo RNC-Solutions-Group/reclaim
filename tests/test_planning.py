@@ -530,6 +530,12 @@ class ExecutionTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(state["state"], "failed")
         self.assertEqual(state["error_code"], "DESTINATION_MISSING")
+        event = project.store.conn.execute(
+            "SELECT event_type FROM execution_events WHERE execution_id=? "
+            "AND event_type='VERIFY_FAILED'",
+            (execution.execution_id,),
+        ).fetchone()
+        self.assertIsNotNone(event)
         reconciliation = reconcile_execution(
             project.store, execution.execution_id, Path(self.tmp.name) / "recon-missing"
         )

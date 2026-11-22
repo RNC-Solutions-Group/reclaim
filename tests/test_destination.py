@@ -94,8 +94,8 @@ class DestinationPolicyTests(unittest.TestCase):
 
     def test_unicode_equivalent_parent_components_collide(self) -> None:
         policy = DestinationPolicy("macos")
-        composed = "Résumé/Notes.txt"
-        decomposed = "Re\u0301sume\u0301/Notes.txt"
+        composed = "Résumé/Été.txt"
+        decomposed = "Re\u0301sume\u0301/E\u0301te\u0301.txt"
         self.assertEqual(
             destination_path_key(composed, policy),
             destination_path_key(decomposed, policy),
@@ -103,6 +103,20 @@ class DestinationPolicyTests(unittest.TestCase):
         result = validate_plan(
             self.root,
             [DestinationItem(1, composed, 1), DestinationItem(2, decomposed, 1)],
+            policy,
+        )
+        self.assertIn(
+            "DUPLICATE_DESTINATION", {issue.code for issue in result.issues}
+        )
+
+    def test_nested_mixed_case_aliases_collide(self) -> None:
+        policy = DestinationPolicy("windows")
+        result = validate_plan(
+            self.root,
+            [
+                DestinationItem(1, "Documents/Reports/2024/File.txt", 1),
+                DestinationItem(2, "documents/reports/2024/file.txt", 1),
+            ],
             policy,
         )
         self.assertIn(

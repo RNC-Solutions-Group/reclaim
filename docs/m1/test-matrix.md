@@ -11,7 +11,7 @@ python -m compileall -q src tests
 
 Latest results on Windows 11 / NTFS / Python 3.13:
 
-- **112 tests, all passing.**
+- **113 tests, all passing.**
 - `compileall` passes.
 - **Packaging smoke:** `pip wheel . --no-deps` produced
   `reclaim-0.2.0-py3-none-any.whl`; installation into a clean virtual
@@ -94,7 +94,7 @@ Latest results on Windows 11 / NTFS / Python 3.13:
 | Destination byte integrity | PASS (post-copy hash + verify test) |
 | Explicit failures | PASS (failed/conflict tests) |
 | No destination writes during dry-run | PASS (test) |
-| Automated tests/static checks | PASS (112 tests + compileall) |
+| Automated tests/static checks | PASS (113 tests + compileall) |
 | Package build/install | PASS (wheel built and installed in an isolated venv; version/help smoke) |
 | Documentation updated | PASS (M1 docs + README) |
 

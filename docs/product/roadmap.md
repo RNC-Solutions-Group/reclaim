@@ -74,7 +74,7 @@ alter source content.
 ## 4. M1 — Migration spine and plan contract
 
 > **Status 2026-11-22:** Implemented and hardened by M1A on `feat/m1`;
-> 112 synthetic tests pass. Operator review pending. See
+> 113 synthetic tests pass. Operator review pending. See
 > [`docs/m1/`](../m1/README.md).
 
 **Objective:** Prove that Reclaim can plan and execute a safe migration before
