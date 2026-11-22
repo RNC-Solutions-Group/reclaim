@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reclaim"
+version = "0.2.0"
+description = "Local-first file discovery, reconciliation, and migration planning."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "License pending operator approval before release" }
+authors = [{ name = "RNC Solutions Group, Inc." }]
+keywords = ["file-management", "deduplication", "migration", "inventory", "privacy"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: End Users/Desktop",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: System :: Filesystems",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+reclaim = "reclaim.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+reclaim = ["data/*.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

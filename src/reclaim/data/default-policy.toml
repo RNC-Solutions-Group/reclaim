@@ -1,0 +1,107 @@
+[meta]
+name = "default"
+version = 1
+description = "Conservative, evidence-based recommendations. Exclusion never deletes."
+
+[default]
+disposition = "retain"
+rationale = "Safe default: retain unless a rule or the operator says otherwise"
+confidence = 0.5
+
+[[rules]]
+id = "os-recycle-container"
+priority = 100
+path_segment_any = ["$RECYCLE.BIN", "$recycle.bin", ".Trash", ".Trashes", "$SysReset"]
+disposition = "exclude"
+rationale = "Operating-system recycle or trash container; not part of the personal library"
+confidence = 0.95
+
+[[rules]]
+id = "media-library-deferred"
+priority = 95
+is_media_library = true
+disposition = "defer_media"
+rationale = "Packaged photo/media library deferred to the media reconciliation phase"
+confidence = 0.95
+
+[[rules]]
+id = "cloud-placeholder"
+priority = 90
+is_cloud = true
+disposition = "needs_review"
+rationale = "Cloud placeholder was not hydrated; content is not stored locally"
+confidence = 0.8
+
+[[rules]]
+id = "os-metadata"
+priority = 80
+basename_glob_any = ["thumbs.db", "ehthumbs.db", "desktop.ini", ".ds_store", "._*"]
+disposition = "potential_junk"
+rationale = "Operating-system thumbnail or folder metadata file"
+confidence = 0.9
+
+[[rules]]
+id = "office-lock-file"
+priority = 80
+basename_glob_any = ["~$*"]
+disposition = "potential_junk"
+rationale = "Office application lock/owner file, not user content"
+confidence = 0.85
+
+[[rules]]
+id = "incomplete-download"
+priority = 70
+extension_any = ["tmp", "temp", "partial", "crdownload", "part", "download", "!ut", "bctmp"]
+disposition = "potential_junk"
+rationale = "Temporary or incomplete-download marker extension"
+confidence = 0.8
+
+[[rules]]
+id = "cache-or-runtime-state"
+priority = 65
+path_segment_any = ["cache", "caches", "code cache", "gpucache", "node_modules", ".cache"]
+disposition = "exclude"
+rationale = "Regenerable application cache or dependency directory"
+confidence = 0.75
+
+[[rules]]
+id = "application-data"
+priority = 60
+kind_any = ["appdata"]
+disposition = "needs_review"
+rationale = "Application or configuration data; retain only if it has user value"
+confidence = 0.6
+
+[[rules]]
+id = "shortcut-or-link"
+priority = 55
+extension_any = ["lnk", "url", "webloc", "desktop"]
+disposition = "needs_review"
+rationale = "Shortcut or internet link; target may be unavailable or unsafe to follow"
+confidence = 0.7
+
+[[rules]]
+id = "download-installer"
+priority = 50
+downloads_context = true
+extension_any = ["exe", "msi", "msp", "pkg", "dmg", "app", "appimage", "deb", "rpm", "apk"]
+disposition = "needs_review"
+rationale = "Software installer in a Downloads context; retain only if still required"
+confidence = 0.55
+
+[[rules]]
+id = "download-archive"
+priority = 45
+downloads_context = true
+extension_any = ["zip", "rar", "7z", "tar", "gz", "iso"]
+disposition = "needs_review"
+rationale = "Archive in a Downloads context; may be an extractable duplicate or reference material"
+confidence = 0.45
+
+[[rules]]
+id = "empty-file"
+priority = 40
+zero_size = true
+disposition = "needs_review"
+rationale = "Zero-byte file; may be a placeholder, failed download, or intentional marker"
+confidence = 0.6
