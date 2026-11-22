@@ -19,9 +19,10 @@ from pathlib import Path
 from . import __version__
 from .errors import SchemaError
 from .hashing import HashOutcome
+from .paths import canonical_path, root_identity
 from .scanner import EntryRecord, SourceFingerprint
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 ALGORITHM = "sha256"
 
 
@@ -33,6 +34,7 @@ def utc_now_iso() -> str:
 class HashTarget:
     entry_id: int
     source_id: str
+    source_root_identity: str
     rel_path: str
     size_bytes: int
     modified_ns: int
@@ -50,6 +52,7 @@ CREATE TABLE IF NOT EXISTS sources (
     label TEXT NOT NULL,
     root_path TEXT NOT NULL,
     canonical_root TEXT NOT NULL,
+    root_identity TEXT NOT NULL DEFAULT '',
     priority INTEGER NOT NULL,
     registered_at TEXT NOT NULL
 );
@@ -62,6 +65,7 @@ CREATE TABLE IF NOT EXISTS scan_runs (
     config_sha256 TEXT NOT NULL,
     status TEXT NOT NULL,
     source_fingerprints_json TEXT,
+    source_identities_json TEXT,
     notes TEXT
 );
 
@@ -107,6 +111,7 @@ CREATE TABLE IF NOT EXISTS hashes (
 
 CREATE TABLE IF NOT EXISTS hash_cache (
     source_id TEXT NOT NULL,
+    root_identity TEXT NOT NULL DEFAULT '',
     rel_path TEXT NOT NULL,
     size_bytes INTEGER NOT NULL,
     modified_ns INTEGER NOT NULL,
@@ -185,41 +190,128 @@ class Store:
                 "INSERT INTO meta(key, value) VALUES ('schema_version', ?)",
                 (SCHEMA_VERSION,),
             )
-            self.conn.commit()
+        elif row["value"] == "1":
+            self._migrate_v1_to_v2()
         elif row["value"] != SCHEMA_VERSION:
             raise SchemaError(
                 f"Database schema {row['value']} is not supported by this build "
                 f"(expected {SCHEMA_VERSION})"
             )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_hash_cache_identity "
+            "ON hash_cache(source_id, root_identity)"
+        )
+        self.conn.commit()
+
+    def _migrate_v1_to_v2(self) -> None:
+        """Add source-root identity to cache keys.
+
+        Existing cache rows receive an empty identity and are therefore not
+        reusable until the source is registered with a real identity.  This is
+        deliberately conservative: a v1 database never recorded which root
+        produced a cache row, so reusing it could attach a hash to a different
+        source that merely shares a relative path, size, and mtime.
+        """
+
+        source_columns = {
+            row["name"] for row in self.conn.execute("PRAGMA table_info(sources)")
+        }
+        if "root_identity" not in source_columns:
+            self.conn.execute(
+                "ALTER TABLE sources ADD COLUMN root_identity TEXT NOT NULL DEFAULT ''"
+            )
+        cache_columns = {
+            row["name"] for row in self.conn.execute("PRAGMA table_info(hash_cache)")
+        }
+        if "root_identity" not in cache_columns:
+            self.conn.execute(
+                "ALTER TABLE hash_cache ADD COLUMN root_identity TEXT NOT NULL DEFAULT ''"
+            )
+        run_columns = {
+            row["name"] for row in self.conn.execute("PRAGMA table_info(scan_runs)")
+        }
+        if "source_identities_json" not in run_columns:
+            self.conn.execute(
+                "ALTER TABLE scan_runs ADD COLUMN source_identities_json TEXT"
+            )
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?)",
+            (SCHEMA_VERSION,),
+        )
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('cache_identity_migration', ?)",
+            ("v1 cache keys lacked root identity; cache entries invalidated",),
+        )
+        self.conn.commit()
 
     # -- sources and runs --------------------------------------------------
 
     def upsert_source(
         self, source_id: str, label: str, root_path: str, priority: int
     ) -> None:
+        canonical_root = str(canonical_path(root_path))
+        identity = root_identity(root_path)
+        existing = self.conn.execute(
+            "SELECT root_identity FROM sources WHERE source_id=?", (source_id,)
+        ).fetchone()
+        if existing is not None and existing["root_identity"] != identity:
+            # The registered root changed (or is a legacy empty identity).
+            # Cached digests belong to the old root and must not be reused.
+            self.conn.execute(
+                "DELETE FROM hash_cache WHERE source_id=?", (source_id,)
+            )
         self.conn.execute(
             """
             INSERT INTO sources(source_id, label, root_path, canonical_root,
-                                priority, registered_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+                                root_identity, priority, registered_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(source_id) DO UPDATE SET
                 label=excluded.label,
                 root_path=excluded.root_path,
                 canonical_root=excluded.canonical_root,
+                root_identity=excluded.root_identity,
                 priority=excluded.priority
             """,
-            (source_id, label, root_path, root_path, priority, utc_now_iso()),
+            (
+                source_id,
+                label,
+                root_path,
+                canonical_root,
+                identity,
+                priority,
+                utc_now_iso(),
+            ),
         )
 
-    def start_run(self, config_sha256: str) -> str:
+    def source_identities(self) -> dict[str, str]:
+        return {
+            row["source_id"]: row["root_identity"]
+            for row in self.conn.execute(
+                "SELECT source_id, root_identity FROM sources ORDER BY source_id"
+            )
+        }
+
+    def start_run(
+        self,
+        config_sha256: str,
+        source_identities: dict[str, str] | None = None,
+    ) -> str:
         run_id = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
         self.conn.execute(
             """
             INSERT INTO scan_runs(run_id, started_at, tool_version,
-                                  config_sha256, status)
-            VALUES (?, ?, ?, ?, 'running')
+                                  config_sha256, status, source_identities_json)
+            VALUES (?, ?, ?, ?, 'running', ?)
             """,
-            (run_id, utc_now_iso(), __version__, config_sha256),
+            (
+                run_id,
+                utc_now_iso(),
+                __version__,
+                config_sha256,
+                json.dumps(source_identities, sort_keys=True)
+                if source_identities
+                else None,
+            ),
         )
         self.conn.commit()
         return run_id
@@ -252,6 +344,12 @@ class Store:
         return self.conn.execute(
             "SELECT * FROM scan_runs ORDER BY started_at DESC LIMIT 1"
         ).fetchone()
+
+    def set_run_status(self, run_id: str, status: str) -> None:
+        self.conn.execute(
+            "UPDATE scan_runs SET status=? WHERE run_id=?", (status, run_id)
+        )
+        self.conn.commit()
 
     def get_run(self, run_id: str) -> sqlite3.Row:
         row = self.conn.execute(
@@ -366,12 +464,16 @@ class Store:
             SELECT e.entry_id, c.algorithm, c.digest, 'ok', c.signature_hex,
                    c.hashed_at, e.size_bytes
             FROM entries e
+            JOIN sources s ON s.source_id = e.source_id
             JOIN hash_cache c
               ON c.source_id = e.source_id
+             AND c.root_identity = s.root_identity
              AND c.rel_path = e.rel_path
              AND c.size_bytes = e.size_bytes
              AND c.modified_ns = e.modified_ns
             WHERE e.run_id=? AND e.entry_type='file'
+              AND s.root_identity <> ''
+              AND c.root_identity <> ''
               AND NOT EXISTS (SELECT 1 FROM hashes h WHERE h.entry_id=e.entry_id)
             """,
             (run_id,),
@@ -398,10 +500,11 @@ class Store:
         # while updating the same table is avoidable lock risk.
         rows = self.conn.execute(
             f"""
-            SELECT e.entry_id, e.source_id, e.rel_path, e.size_bytes,
-                   e.modified_ns, e.is_cloud
+            SELECT e.entry_id, e.source_id, s.root_identity, e.rel_path,
+                   e.size_bytes, e.modified_ns, e.is_cloud
             FROM entries e
             JOIN hashes h ON h.entry_id = e.entry_id
+            JOIN sources s ON s.source_id = e.source_id
             WHERE e.run_id=? AND h.status IN ({placeholders})
             ORDER BY e.source_id, e.rel_path
             """,
@@ -411,6 +514,7 @@ class Store:
             yield HashTarget(
                 entry_id=row["entry_id"],
                 source_id=row["source_id"],
+                source_root_identity=row["root_identity"],
                 rel_path=row["rel_path"],
                 size_bytes=row["size_bytes"],
                 modified_ns=row["modified_ns"],
@@ -440,16 +544,19 @@ class Store:
         if outcome.ok:
             self.conn.execute(
                 """
-                INSERT INTO hash_cache(source_id, rel_path, size_bytes, modified_ns,
-                                       algorithm, digest, signature_hex, hashed_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO hash_cache(source_id, root_identity, rel_path,
+                                       size_bytes, modified_ns, algorithm,
+                                       digest, signature_hex, hashed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(source_id, rel_path, size_bytes, modified_ns, algorithm)
-                DO UPDATE SET digest=excluded.digest,
+                DO UPDATE SET root_identity=excluded.root_identity,
+                              digest=excluded.digest,
                               signature_hex=excluded.signature_hex,
                               hashed_at=excluded.hashed_at
                 """,
                 (
                     target.source_id,
+                    target.source_root_identity,
                     target.rel_path,
                     target.size_bytes,
                     target.modified_ns,

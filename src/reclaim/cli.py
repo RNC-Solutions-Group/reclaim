@@ -49,12 +49,12 @@ def main(argv: list[str] | None = None) -> int:
     scan.add_argument("--config", required=True)
     scan.set_defaults(func=command_scan)
 
-    hash_cmd = subcommands.add_parser("hash", help="Hash pending files and verify source fingerprints")
+    hash_cmd = subcommands.add_parser("hash", help="Hash pending files and verify source metadata consistency")
     hash_cmd.add_argument("--config", required=True)
-    hash_cmd.add_argument("--run", default=None, help="Scan run id (default: latest)")
+    hash_cmd.add_argument("--run", default=None, help="Scan run id (default: config run or latest)")
     hash_cmd.add_argument("--retry-errors", action="store_true")
     hash_cmd.add_argument("--limit", type=int, default=None)
-    hash_cmd.add_argument("--no-verify", action="store_true", help="Skip post-hash source fingerprint check")
+    hash_cmd.add_argument("--no-verify", action="store_true", help="Skip post-hash source metadata consistency check")
     hash_cmd.set_defaults(func=command_hash)
 
     export = subcommands.add_parser("export", help="Write private analysis reports")
@@ -63,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
     export.add_argument("--out", default=None)
     export.set_defaults(func=command_export)
 
-    verify = subcommands.add_parser("verify", help="Re-check source fingerprints and sample hashes")
+    verify = subcommands.add_parser("verify", help="Re-check source metadata consistency and sample hashes")
     verify.add_argument("--config", required=True)
     verify.add_argument("--run", default=None)
     verify.add_argument("--sample", type=int, default=25)
@@ -103,10 +103,11 @@ def _register(store: Store, config: ProjectConfig) -> None:
     store.commit()
 
 
-def _run_id(store: Store, requested: str | None) -> str:
-    if requested:
-        store.get_run(requested)
-        return requested
+def _run_id(store: Store, requested: str | None, config: ProjectConfig) -> str:
+    candidate = requested or config.default_run_id
+    if candidate:
+        store.get_run(candidate)
+        return candidate
     latest = store.latest_run()
     if latest is None:
         raise ReclaimError("No scan run exists yet; run 'reclaim scan' first")
@@ -170,6 +171,8 @@ def _scan_fingerprint(config: ProjectConfig, source_id: str) -> SourceFingerprin
 
 
 def _stored_fingerprints(store: Store, run_id: str) -> dict[str, dict[str, object]]:
+    """Stored metadata-consistency records, not byte-level integrity proofs."""
+
     run = store.get_run(run_id)
     raw = run["source_fingerprints_json"]
     return json.loads(raw) if raw else {}
@@ -186,12 +189,16 @@ def _verify_fingerprints(
     checks: list[dict[str, object]] = []
     for source in config.sources:
         if verbose:
-            print(f"verifying source metadata: {source.source_id}", flush=True)
+            print(
+                f"verifying source metadata consistency (not byte integrity): "
+                f"{source.source_id}",
+                flush=True,
+            )
         try:
             current = _scan_fingerprint(config, source.source_id).as_dict()
         except ReclaimError as exc:
             check = {
-                "check": "source_fingerprint",
+                "check": "source_metadata_consistency",
                 "source_id": source.source_id,
                 "status": "ERROR",
                 "detail": str(exc),
@@ -200,7 +207,7 @@ def _verify_fingerprints(
             expected = stored.get(source.source_id)
             matches = expected == current
             check = {
-                "check": "source_fingerprint",
+                "check": "source_metadata_consistency",
                 "source_id": source.source_id,
                 "status": "PASS" if matches else "FAIL",
                 "detail": None
@@ -208,7 +215,12 @@ def _verify_fingerprints(
                 else f"expected={expected} current={current}",
             }
         checks.append(check)
-        store.record_check(run_id, f"source_fingerprint:{source.source_id}", str(check["status"]), str(check.get("detail") or ""))
+        store.record_check(
+            run_id,
+            f"source_metadata_consistency:{source.source_id}",
+            str(check["status"]),
+            str(check.get("detail") or ""),
+        )
         if verbose:
             print(f"  {check['status']}", flush=True)
     return checks
@@ -237,8 +249,15 @@ def command_scan(args: argparse.Namespace) -> int:
     started = time.monotonic()
     with _store(config) as store:
         _register(store, config)
-        run_id = store.start_run(config.fingerprint())
+        run_id = store.start_run(
+            config.fingerprint(), store.source_identities()
+        )
         print(f"scan run: {run_id}")
+        if config.default_run_id and config.default_run_id != run_id:
+            print(
+                f"note: this config pins run {config.default_run_id}; "
+                f"pass --run {run_id} to hash/export the new run"
+            )
         fingerprints: dict[str, dict[str, object]] = {}
         for source in config.sources:
             print(f"scanning {source.source_id}: {source.path}", flush=True)
@@ -297,7 +316,7 @@ def command_hash(args: argparse.Namespace) -> int:
     config = _config(args)
     with _store(config) as store:
         _register(store, config)
-        run_id = _run_id(store, args.run)
+        run_id = _run_id(store, args.run, config)
         targets = list(store.hash_targets(run_id, retry_errors=args.retry_errors))
         if args.limit is not None:
             targets = targets[: args.limit]
@@ -334,15 +353,22 @@ def command_hash(args: argparse.Namespace) -> int:
                 last_report = now
         store.commit()
         elapsed = time.monotonic() - started
+        counts = store.counts(run_id)
+        run_status = (
+            "complete"
+            if counts["hash_pending"] == 0 and counts["hash_errors"] == 0
+            else "partial"
+        )
+        store.set_run_status(run_id, run_status)
         print(
             f"hashing complete: {total:,} files, {bytes_done / 1e9:.2f} GB, "
-            f"{errors} errors, {elapsed:.1f}s"
+            f"{errors} errors, {elapsed:.1f}s; run status: {run_status}"
         )
         if not args.no_verify:
             checks = _verify_fingerprints(config, store, run_id)
             failures = [check for check in checks if check["status"] != "PASS"]
             print(
-                "source preservation check: "
+                "source metadata consistency check (not byte integrity): "
                 + ("PASS" if not failures else f"{len(failures)} failure(s)")
             )
             for failure in failures:
@@ -354,7 +380,7 @@ def command_export(args: argparse.Namespace) -> int:
     config = _config(args)
     profile, policy = _profiles(config)
     with _store(config) as store:
-        run_id = _run_id(store, args.run)
+        run_id = _run_id(store, args.run, config)
         counts = store.counts(run_id)
         if counts["hash_pending"]:
             print(
@@ -425,7 +451,7 @@ def command_export(args: argparse.Namespace) -> int:
 def command_verify(args: argparse.Namespace) -> int:
     config = _config(args)
     with _store(config) as store:
-        run_id = _run_id(store, args.run)
+        run_id = _run_id(store, args.run, config)
         print(f"run: {run_id}")
         checks = _verify_fingerprints(config, store, run_id)
 
@@ -476,7 +502,7 @@ def command_verify(args: argparse.Namespace) -> int:
 def command_status(args: argparse.Namespace) -> int:
     config = _config(args)
     with _store(config) as store:
-        run_id = _run_id(store, args.run)
+        run_id = _run_id(store, args.run, config)
         counts = store.counts(run_id)
         run = store.get_run(run_id)
         print(f"run:        {run_id}")

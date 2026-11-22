@@ -91,6 +91,7 @@ class ProjectConfig:
     types_file: Path | None = None
     policy_file: Path | None = None
     policy_overlay_file: Path | None = None
+    default_run_id: str | None = None
 
     def fingerprint(self) -> str:
         payload = {
@@ -143,6 +144,9 @@ def load_config(path: str | Path) -> ProjectConfig:
     if not workspace_value:
         raise ConfigError("[project].workspace is required")
     workspace = _resolve(config_path.parent, str(workspace_value))
+    default_run_id = (
+        str(project["run"]).strip() if project.get("run") else None
+    )
 
     database_path = _workspace_path(
         workspace, project.get("database", workspace / "db" / "inventory.sqlite3")
@@ -232,6 +236,7 @@ def load_config(path: str | Path) -> ProjectConfig:
         types_file=types_file,
         policy_file=policy_file,
         policy_overlay_file=policy_overlay_file,
+        default_run_id=default_run_id,
     )
     validate_config(config)
     return config

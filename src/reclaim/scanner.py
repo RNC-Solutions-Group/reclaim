@@ -66,7 +66,13 @@ class EntryRecord:
 
 @dataclass(frozen=True)
 class SourceFingerprint:
-    """Metadata-only fingerprint used to prove a source was not modified."""
+    """Metadata-consistency fingerprint for a source tree.
+
+    It covers relative paths, entry types, sizes, and modification times.  A
+    match confirms that the metadata observed at two points is consistent; it
+    does **not** establish byte-level integrity.  SHA-256 hashes (and sampled
+    re-reads) are the evidence for content integrity.
+    """
 
     entry_count: int
     file_count: int

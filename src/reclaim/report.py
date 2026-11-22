@@ -406,7 +406,14 @@ def write_manifest(
         "config_sha256": config_sha256,
         "configuration": configuration or {},
         "sources": sources,
+        "source_identities": json.loads(run["source_identities_json"] or "{}"),
         "fingerprints": json.loads(run["source_fingerprints_json"] or "{}"),
+        "verification_note": (
+            "Source fingerprints establish metadata consistency only "
+            "(relative paths, sizes, modification times, and entry types). "
+            "They do not establish byte-level integrity; SHA-256 hashes and "
+            "sampled re-reads provide that evidence."
+        ),
         "checks": checks,
         "counts": store.counts(run_id),
         "database": str(store.path),

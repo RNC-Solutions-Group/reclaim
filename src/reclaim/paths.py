@@ -6,6 +6,8 @@ paths.  Nothing in this module touches file content.
 
 from __future__ import annotations
 
+import ctypes
+import hashlib
 import os
 import sys
 from collections.abc import Iterable
@@ -31,6 +33,59 @@ def path_key(value: str | os.PathLike[str]) -> str:
     """Return a comparison key: canonical, normalised, case-folded on Windows."""
 
     return os.path.normcase(os.path.normpath(str(canonical_path(value))))
+
+
+def _volume_identity(root: Path) -> str:
+    """Return a stable identifier for the volume backing *root*.
+
+    The identifier deliberately includes volume-level information so that a
+    different disk mounted at the same path (or the same relative path on a
+    different source) cannot be mistaken for the original source.
+    """
+
+    if WINDOWS:
+        try:
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            serial = ctypes.c_ulong()
+            filesystem = ctypes.create_unicode_buffer(256)
+            anchor = root.anchor or str(root)
+            ok = kernel32.GetVolumeInformationW(
+                ctypes.c_wchar_p(anchor),
+                None,
+                0,
+                ctypes.byref(serial),
+                None,
+                None,
+                filesystem,
+                len(filesystem),
+            )
+            if ok:
+                return f"win:{serial.value:08x}:{filesystem.value}"
+        except (AttributeError, OSError, ValueError):
+            pass
+        try:
+            return f"win-dev:{root.stat().st_dev}"
+        except OSError:
+            return "win-unknown"
+    try:
+        return f"posix-dev:{root.stat().st_dev}"
+    except OSError:
+        return "posix-unknown"
+
+
+def root_identity(value: str | os.PathLike[str]) -> str:
+    """Stable identity for a registered source root.
+
+    It changes when the canonical root, its volume, or its filesystem changes.
+    Cache entries keyed by this identity are therefore not reused for a
+    different source registration merely because a relative path, size, and
+    modification time happen to match.
+    """
+
+    root = canonical_path(value)
+    normalized = os.path.normcase(str(root))
+    payload = f"{normalized}\0{_volume_identity(root)}"
+    return hashlib.sha256(payload.encode("utf-8", "surrogatepass")).hexdigest()[:32]
 
 
 def is_within(child: str | os.PathLike[str], parent: str | os.PathLike[str]) -> bool:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from reclaim.paths import (
     long_path,
     parent_rel,
     paths_overlap,
+    root_identity,
 )
 
 
@@ -55,6 +57,17 @@ class PathTests(unittest.TestCase):
 
     def test_canonical_is_absolute(self) -> None:
         self.assertTrue(canonical_path(".").is_absolute())
+
+    def test_root_identity_is_stable_and_path_specific(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            first = base / "first"
+            second = base / "second"
+            first.mkdir()
+            second.mkdir()
+            self.assertEqual(root_identity(first), root_identity(first))
+            self.assertNotEqual(root_identity(first), root_identity(second))
+            self.assertRegex(root_identity(first), r"^[0-9a-f]{32}$")
 
 
 if __name__ == "__main__":

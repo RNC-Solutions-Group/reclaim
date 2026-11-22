@@ -6,6 +6,8 @@ name = "example-project"
 workspace = "./reclaim-work"
 database = "db/inventory.sqlite3"
 reports_dir = "reports"
+# Optional: pin operations to a specific scan run instead of the latest run.
+# run = "20260101T000000Z-00000000"
 
 [scan]
 include_hidden = true
