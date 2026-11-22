@@ -68,6 +68,10 @@ Output includes:
 
 **No destination files are written by `plan`.**
 
+The `--destination` value is retained as the **selected path** and validated
+separately from its canonical resolution. A symlink/junction destination root or
+redirected ancestor is rejected; do not select a link as the destination.
+
 ### Duplicate policies
 
 | Policy | Meaning |
@@ -182,22 +186,32 @@ reclaim execute \
 
 Execution:
 
-1. revalidates sources and destination;
+1. revalidates sources and the **raw selected destination path**;
 2. checks free space;
 3. creates/reuses a journaled execution;
 4. re-hashes each source and compares the planned digest;
-5. copies to a temp file, verifies, publishes without overwrite;
+5. copies to a temp file, verifies, and publishes with atomic hard-link
+   no-overwrite;
 6. re-hashes the destination and records `verified`, `failed`, or `conflict`;
 7. prints an execution id and summary.
 
-Failed/conflicting items do not stop other items. The final status is `complete`
-or `complete_with_failures`.
+Failed/conflicting items do not stop other items. The final status is `complete`,
+`complete_with_failures`, or `paused`.
+
+Publication requires `os.link`. Filesystems without hard-link support fail with
+`PUBLICATION_UNSUPPORTED`; there is **no overwrite-capable fallback**.
 
 ### Resume
 
 Re-run the same `execute` command after an interruption. A `paused` or crashed
-`running` execution is resumed. Verified items are not recopied. Failed items
-are retried by default; use `--no-retry-failed` to leave them failed.
+`running` execution is resumed. Verified items are revalidated (missing/changed
+destinations become failures). Failed items are retried by default; use
+`--no-retry-failed` to leave them failed.
+
+An existing destination is accepted only if this execution has provenance: the
+item was already `verified`, or a committed `DEST_PUBLISHED` event exists for
+this execution. A matching hash alone is **not** accepted; it produces
+`DESTINATION_PREEXISTING`.
 
 `--max-items N` is available for fault-injection/testing; it pauses after N
 items and is intentionally useful for resume tests.
@@ -213,8 +227,11 @@ reclaim reconcile \
   --out demo/reconciliation
 ```
 
-Verification re-hashes every item recorded `verified`. A mismatch moves it to
-`failed` and records a verification result.
+Verification re-hashes every item recorded `verified` (and retries prior
+verification failures). A missing file, unreadable file, or hash mismatch moves
+the item to `failed`, persists an error code/event, sets the execution status to
+`verification_failed`, and makes subsequent reconciliation report `failed`. A
+restored matching file can be recovered on a later verification run.
 
 Reconciliation writes `reconciliation-<execution>.csv` and `.json`. Every plan
 item receives one outcome:
@@ -228,28 +245,53 @@ item receives one outcome:
 - `conflict`
 - `incomplete`
 
-`balanced: true` means the outcome total equals the plan-item total.
+Two independent fields matter:
+
+- **balanced**: every plan item has exactly one outcome.
+- **successful**: every required copy is `copied_verified`, with no blocking
+  outcome. Authorized exclusions, deferrals, and duplicate omissions are
+  legitimate terminal outcomes.
+
+`balanced: true` is accounting completeness, not migration success.
+`assessment` is `success`, `failed`, or `incomplete`.
 
 ## 9. Expected safety behavior
 
 | Situation | Result |
 | --- | --- |
 | Destination exists before execution | Conflict; no overwrite |
+| Destination exists with a matching hash but no execution provenance | Conflict; not adopted |
 | Destination appears after preflight | Conflict; no overwrite |
+| Destination is a link/reparse root or redirected ancestor | Planning/authorization/execution refuses |
 | Source changed after planning | Authorization/execution refuses; no copy |
 | Source content changed with same size/mtime | Per-item source hash failure; no copy |
 | Plan row tampered in DB | Digest mismatch; refuses |
 | Wrong authorization digest | Refuses |
-| Destination is a link/reparse root | Refuses |
+| Hard-link publication unsupported | Item fails closed; no fallback |
 | Insufficient capacity | Refuses before writes |
 | Failed item | Recorded; other items continue |
 | Interrupted execution | Resume without recopying verified items |
+| Destination deleted/corrupted after execution | Verification fails; reconciliation reports failure |
 
 ## 10. Exit behavior
 
-CLI errors are written to stderr and return exit code `2`. A completed execution
-with item failures still exits `0` after reporting the execution status; inspect
-the summary and reconciliation before treating it as successful.
+| Code | Meaning |
+| ---: | --- |
+| 0 | Success: clean/executable plan, completed execution, PASS verification, or successful reconciliation |
+| 2 | Usage/configuration/service error |
+| 3 | Plan blockers; execution completed with failures/conflicts; verification of a failed execution |
+| 4 | Execution/reconciliation incomplete or paused |
+| 5 | Verification failure |
+| 6 | Reconciliation balanced but unsuccessful, or otherwise failed |
+
+`plan` returns 3 when it creates a plan with conflicts/global issues.
+`execute --dry-run` returns 3 for a blocked plan and 0 for a clean executable
+plan. `execute` returns 0 only for `complete`; 3 for `complete_with_failures`;
+4 for `paused`. `verify-execution` returns 5 for verification failure and 4 for
+an incomplete execution. `reconcile` returns 0 only when `successful` is true.
+
+Machine-readable summaries remain in the JSON output; callers should use exit
+codes plus the JSON fields, not prose parsing.
 
 ## 11. Privacy and scope
 

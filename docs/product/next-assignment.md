@@ -1,7 +1,8 @@
 # Recommended Immediate Assignment — M1: Migration Spine and Plan Contract
 
-> **Status 2026-11-22:** Implemented on `feat/m1`; this document remains the
-> scope record and acceptance contract. See [`docs/m1/`](../m1/README.md).
+> **Status 2026-11-22:** Implemented and hardened by M1A on `feat/m1`; 112
+> synthetic tests pass. This document remains the scope record and acceptance
+> contract. See [`docs/m1/`](../m1/README.md).
 
 **Status:** Proposed. Requires operator authorization.
 **Predecessor:** M0 CP1 corrective foundation (this assignment).
@@ -32,7 +33,7 @@ organizer, it can perform a real migration safely.
 
 ## 2. Scope
 
-### 2.1 Schema v3
+### 2.1 Schema v3/v4
 
 Add tables (names indicative):
 
@@ -125,7 +126,7 @@ must not execute a real migration.
 
 ## 4. Deliverables
 
-1. Schema v3 migration and data-model update.
+1. Schema v3/v4 migration and data-model update.
 2. `reclaim plan`, `preview`, `authorize`, `execute` (with `--dry-run`),
    `verify`, `reconcile` CLI commands.
 3. Destination validator with a hostile-name test matrix.

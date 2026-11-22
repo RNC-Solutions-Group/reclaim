@@ -73,15 +73,16 @@ alter source content.
 
 ## 4. M1 — Migration spine and plan contract
 
-> **Status 2026-11-22:** Implemented on `feat/m1`, validated with synthetic
-> fixtures; operator review pending. See [`docs/m1/`](../m1/README.md).
+> **Status 2026-11-22:** Implemented and hardened by M1A on `feat/m1`;
+> 112 synthetic tests pass. Operator review pending. See
+> [`docs/m1/`](../m1/README.md).
 
 **Objective:** Prove that Reclaim can plan and execute a safe migration before
 adding intelligence.
 
 ### Scope
 
-1. **Schema v3**
+1. **Schema v3/v4**
    - `analyses`, `recommendations`, `overrides`
    - `plans`, `plan_items`, `plan_edits`
    - `executions`, `execution_items`, `execution_events`,
@@ -115,7 +116,7 @@ adding intelligence.
 ### Deliverables
 
 - CLI: `plan`, `preview`, `authorize`, `execute`, `verify`, `reconcile`.
-- Schema v3 migration.
+- Schema v3/v4 migration.
 - Synthetic end-to-end and fault-injection tests.
 - A short operator guide for a dry run.
 

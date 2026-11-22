@@ -1,7 +1,9 @@
-# M1 — Data Model (Schema v3)
+# M1 — Data Model (Schema v4)
 
 Schema v3 adds M1 analysis, override, plan, authorization, execution, journal,
-and verification structures. It is a forward migration from schema v2.
+and verification structures. Schema v4 adds the raw selected destination path
+(`destination_selected`) so redirection can be validated separately from the
+canonical root. Both are forward migrations.
 
 ## 1. Entity relationships
 
@@ -69,12 +71,12 @@ erDiagram
 | plan_digest | SHA-256 of canonical plan body; unique |
 | plan_schema_version | 1 |
 | source_run_id, analysis_id | Provenance |
-| destination_root, destination_template | Destination settings |
+| destination_root, destination_selected, destination_template | Canonical root, raw operator-selected path, and template |
 | duplicate_policy, target_platform, max_path_length | Policy settings |
 | policy_fingerprint | Recommendation data hash |
 | source_snapshot_json | Source identities + metadata fingerprints + roots |
 | summary_json | Counts, bytes, conflicts, global issues |
-| status | draft / authorized / paused / running / complete / complete_with_failures |
+| status | draft / authorized / paused / running / complete / complete_with_failures / verification_failed / verification_incomplete |
 | created_at | UTC |
 
 ### 2.5 `plan_items`
@@ -102,8 +104,9 @@ Execution requires a matching plan id + digest.
 ### 2.7 `executions`
 
 `execution_id`, `plan_id`, `plan_digest`, `destination_root`, `status`
-(`running`, `paused`, `complete`, `complete_with_failures`, `failed`),
-`started_at`, `finished_at`, `summary_json`.
+(`running`, `paused`, `complete`, `complete_with_failures`,
+`verification_failed`, `verification_incomplete`), `started_at`, `finished_at`,
+`summary_json`.
 
 ### 2.8 `execution_items`
 
@@ -111,6 +114,10 @@ Execution requires a matching plan id + digest.
 (`pending`, `verified`, `failed`, `conflict`), `destination_rel`,
 `expected_sha256`, `actual_sha256`, `bytes_copied`, `attempts`, `error_code`,
 `error_message`, timestamps.
+
+Verification can transition `verified` to `failed` with error codes
+`DESTINATION_MISSING`, `DESTINATION_UNREADABLE`, or `VERIFY_MISMATCH`; a later
+verification can restore a matching destination to `verified`.
 
 Unique `(execution_id, item_id)`.
 
@@ -120,8 +127,9 @@ Append-only journal: `event_id`, `execution_id`, `item_id`, `sequence`,
 `event_type`, `occurred_at`, `detail_json`.
 
 Event types include `EXECUTION_STARTED`, `EXECUTION_RESUMED`,
-`ITEM_STARTED`, `SOURCE_VERIFIED`, `ITEM_VERIFIED`, `ITEM_FAILED`,
-`ITEM_CONFLICT`, `EXECUTION_PAUSED`, `EXECUTION_COMPLETE`,
+`ITEM_STARTED`, `SOURCE_VERIFIED`, `DEST_PUBLISHED`, `ITEM_VERIFIED`,
+`ITEM_FAILED`, `ITEM_CONFLICT`, `VERIFY_PASSED`, `VERIFY_FAILED`,
+`VERIFICATION_COMPLETED`, `EXECUTION_PAUSED`, `EXECUTION_COMPLETE`,
 `EXECUTION_COMPLETE_WITH_FAILURES`.
 
 ## 3. Plan digest body
@@ -133,6 +141,7 @@ Event types include `EXECUTION_STARTED`, `EXECUTION_RESUMED`,
   "source_run_id": "...",
   "analysis_id": "...",
   "destination_root": "...",
+  "destination_selected": "...",
   "destination_template": "{source_id}/{rel_path}",
   "duplicate_policy": "prefer_one",
   "target_platform": "windows",
@@ -158,14 +167,24 @@ Canonical serialization: sorted keys, compact separators, UTF-8, items sorted by
 7. Execution items are unique per plan item.
 8. Every plan item reaches an explicit reconciliation outcome.
 9. No execution item reaches `verified` without a matching destination hash.
-10. Source files are never written by execution.
-11. Destination publication never overwrites an existing path.
-12. A changed plan digest invalidates prior authorization.
+10. Verification failures transition items out of `verified` and persist an
+    error code/event; they cannot retain stale success.
+11. An existing destination is adopted only with execution provenance (prior
+    `verified` state or a committed `DEST_PUBLISHED` event), never by hash alone.
+12. Source files are never written by execution.
+13. Destination publication never overwrites an existing path; unsupported
+    atomic publication fails closed.
+14. A changed plan digest invalidates prior authorization.
+15. `balanced` reconciliation is accounting completeness; `successful`
+    additionally requires every required copy to be verified and no blocking
+    outcome.
 
 ## 5. Migration
 
 - Schema v2 → v3 creates the tables above and records `m1_schema_migration`.
-- Schema v1 → v2 → v3 remains supported.
+- Schema v3 → v4 adds `plans.destination_selected` and backfills existing plans
+  from `destination_root`.
+- Schema v1 → v2 → v3 → v4 remains supported.
 - No destructive rewrite of inventory/hash data.
 - Existing CP1 reports remain valid; M1 tables are additive.
 

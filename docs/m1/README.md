@@ -1,6 +1,8 @@
 # M1 — Migration Spine and Plan Contract
 
-**Status:** Implementation complete on `feat/m1`; operator review pending.
+**Status:** M1A corrective hardening complete on `feat/m1`; operator review
+pending. 112 tests pass. See the
+[test matrix](test-matrix.md) for acceptance evidence and explicit limitations.
 **Scope:** Deterministic planning, preview, authorization, journaled copy,
 verification, resume, and reconciliation using synthetic data only.
 
@@ -19,16 +21,20 @@ GUI work, SLM work, external AI, or real-data migration.
 - An immutable, content-addressed migration plan built from inventory hashes,
   policy recommendations, duplicate policy, and explicit overrides.
 - A destination validator independent of the host platform for path safety,
-  reserved names, length, case/Unicode collisions, duplicates, links, existing
-  files, and capacity.
+  reserved names, length, whole-path case/Unicode equivalence, duplicates,
+  existing files/directories, links, redirection, and capacity.
 - Explicit plan-digest authorization; changed plan content invalidates
   authorization.
 - Journaled, resumable, copy-only execution with no implicit overwrite or
-  deletion.
+  deletion; atomic hard-link publication with fail-closed unsupported handling.
 - Source metadata and content revalidation before copying.
-- Post-copy SHA-256 verification and a balanced reconciliation of every plan
-  item.
-- CLI commands for the complete synthetic workflow.
+- Post-copy SHA-256 verification; missing/corrupt destinations cannot retain
+  verified status.
+- Reconciliation that distinguishes accounting completeness (`balanced`) from
+  successful migration (`successful`).
+- CLI commands with stable nonzero exit codes for failure, incomplete,
+  verification, and reconciliation outcomes.
+- Synthetic end-to-end, fault-injection, resume, and CLI tests.
 
 ## Non-goals
 

@@ -4,11 +4,12 @@ Reclaim is a local-first utility for discovering, inventorying, reconciling,
 organizing, and migrating personal files across multiple computers and backup
 collections — without risking the originals.
 
-> **Status: M1 migration spine (pre-alpha).** The repository contains a
+> **Status: M1 + M1A migration spine (pre-alpha).** The repository contains a
 > read-only inventory/hashing engine plus the M1 plan, preview, authorization,
-> journaled copy, verification, resume, and reconciliation subsystem. It does
-> **not** yet contain document extraction, a GUI, or real-data migration
-> authorization. M1 is validated only on synthetic datasets.
+> journaled copy, verification, resume, and reconciliation subsystem, hardened
+> by M1A correctness and filesystem-safety corrections. It does **not** yet
+> contain document extraction, a GUI, or real-data migration authorization. M1
+> is validated only on synthetic datasets.
 
 ## Why Reclaim exists
 
@@ -42,6 +43,9 @@ Reclaim's approach is deliberately conservative:
 - Processing is offline. There are no telemetry, cloud, or model/API calls.
 - Unreadable or changing files are recorded as documented failures rather than
   silently skipped or given an unreliable digest.
+- Destination publication uses atomic hard-link no-overwrite semantics. If the
+  filesystem cannot support it, execution fails closed; there is no
+  overwrite-capable fallback.
 
 ## Quick start (development)
 
@@ -98,6 +102,9 @@ overlapping source/workspace/destination paths before scanning.
 | Explicit plan authorization and duplicate policies | Implemented (M1) |
 | Journaled, resumable, copy-only execution with no overwrite | Implemented (M1) |
 | Post-copy SHA-256 verification and balanced reconciliation | Implemented (M1) |
+| Verification failure invalidation and accurate reconciliation success/assessment | Implemented (M1A) |
+| Whole-path target equivalence and fail-closed atomic publication | Implemented (M1A) |
+| Stable CLI exit codes for failure/incomplete/verification/reconciliation | Implemented (M1A) |
 | Similarity, revision detection, content extraction, and AI assistance | Not implemented (later milestone) |
 | GUI, naming intelligence, real-data migration | Not implemented (later milestones) |
 
@@ -146,10 +153,12 @@ The suite builds synthetic trees covering exact duplicates across sources,
 renamed duplicates, same-name/different-content collisions, empty and hidden
 entries, Unicode names, deep paths, junctions/symlinks, hash failures, policy
 precedence, cache reuse, and an end-to-end scan/hash/export run. M1 adds
-destination policy, plan determinism, authorization invalidation, journaled
-execution, resume, no-overwrite, source-change, destination-race, and
-reconciliation tests. Tests that require junction creation are skipped on
-platforms where the process is not permitted to create one.
+destination policy, whole-path equivalence, plan determinism, authorization
+invalidation, journaled execution, resume, no-overwrite/publication failure,
+source-change, destination-race, verification invalidation/recovery, and
+balanced-vs-successful reconciliation tests. **112 tests pass** on the M1A
+branch. Tests that require junction creation are skipped on platforms where the
+process is not permitted to create one.
 
 ## Documentation
 
