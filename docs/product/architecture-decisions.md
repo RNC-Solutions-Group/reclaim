@@ -1,9 +1,35 @@
 # Architecture Decision Register
 
-**Status:** Proposals for operator review unless marked accepted.
+**Status:** Proposals for operator review unless marked accepted or approved.
 **Rule:** Each decision records the preferred option, meaningful alternatives,
 and the consequence of getting it wrong. Implementation details that ordinary
 engineering can settle are intentionally not listed.
+
+## Operator approval log — 2026-11-22
+
+The operator approved the architecture direction with these scope constraints:
+
+- **ADR-003 approved.** Evidence, understanding, recommendations, overrides, and
+  plans remain separate. A recommendation is never authorization.
+- **ADR-004 approved in principle.** Bounded local extraction with explicit
+  unsupported/error states, subprocess isolation where appropriate, and
+  dependency/license review. Detailed implementation belongs to M3.
+- **ADR-005 approved in principle.** Local ONNX embedding-provider architecture
+  retained; no model selection or bundling during M1.
+- **ADR-006 approved.** Confidence must be empirically calibrated; no
+  uncalibrated similarity scores presented as probabilities.
+- **ADR-007 approved and required for M1.** Immutable, hash-pinned plans;
+  journaled execution; explicit authorization; deterministic reconciliation;
+  resumability.
+- **ADR-008 approved.** Preserve / Intelligent / Standardized policies remain.
+  Intelligent stays the intended default subject to evidence and acceptance
+  thresholds; full naming intelligence is not M1.
+- **ADR-009 conditionally approved.** PySide6/Qt is the GUI direction, subject to
+  LGPL compliance, packaging, redistribution, and replacement considerations.
+  GUI work is not M1.
+- **ADR-010 approved.** No SLM in the base alpha; Enhanced remains
+  benchmark-gated and requires a future operator decision. No SLM or external
+  provider work in M1.
 
 ---
 
@@ -60,7 +86,7 @@ Schema v2 is forward-migrated.
 
 ## ADR-003 — Separate observed evidence, inference, recommendation, and plan
 
-**Status:** Proposed.
+**Status:** Approved 2026-11-22.
 
 **Context.** CP1 computes recommendations at export time. A GUI needs reviewable,
 persisted decisions; a plan must be reproducible from frozen inputs.
@@ -89,7 +115,7 @@ determinism become possible.
 
 ## ADR-004 — Extraction stack, isolation, and format scope
 
-**Status:** Proposed.
+**Status:** Approved in principle 2026-11-22; implementation deferred to M3.
 
 **Context.** Document parsing is the largest capability gap and a security
 boundary. Python has good permissive libraries but no single universal parser.
@@ -121,7 +147,8 @@ failure. Format coverage is measured, not assumed.
 
 ## ADR-005 — Embeddings: small ONNX model behind a provider interface
 
-**Status:** Proposed; model choice benchmark-gated.
+**Status:** Approved in principle 2026-11-22; model choice benchmark-gated and
+not in M1.
 
 **Context.** Semantic similarity can improve collection reconstruction and
 classification, but model quality, size, licensing, and reproducibility vary.
@@ -151,7 +178,7 @@ remains reversible.
 
 ## ADR-006 — Confidence is a calibrated vector, not cosine similarity
 
-**Status:** Proposed.
+**Status:** Approved 2026-11-22.
 
 **Context.** The product exposes confidence presets (e.g., 0.85–0.99). Those
 numbers are meaningless unless calibrated and separated by decision type.
@@ -178,7 +205,7 @@ promises numeric confidence.
 
 ## ADR-007 — Plans are immutable, hash-pinned, and separate from execution
 
-**Status:** Proposed.
+**Status:** Approved 2026-11-22; required for M1.
 
 **Context.** Migration is consequential. A preview must be exactly what executes.
 
@@ -204,7 +231,7 @@ resumable.
 
 ## ADR-008 — Filename policies: preserve, intelligent, standardized
 
-**Status:** Proposed.
+**Status:** Approved 2026-11-22; naming intelligence deferred to M5.
 
 **Context.** Filenames are often the only human-facing metadata, but aggressive
 renaming can destroy recognition and leak sensitive content.
@@ -234,7 +261,7 @@ claimed.
 
 ## ADR-009 — GUI: PySide6/Qt, with LGPL compliance review
 
-**Status:** Proposed.
+**Status:** Conditionally approved 2026-11-22; GUI work deferred to M2.
 
 **Context.** The alpha needs large virtualized tables, a tree preview, progress
 jobs, and native packaging.
@@ -257,7 +284,7 @@ include Qt notices and allow library replacement.
 
 ## ADR-010 — No SLM in the base alpha; Enhanced is benchmark-gated
 
-**Status:** Proposed.
+**Status:** Approved 2026-11-22; no SLM work in M1.
 
 **Context.** A bundled SLM may improve ambiguous interpretation, but adds
 hundreds of MB to gigabytes, latency, memory, licensing constraints, and support
@@ -331,13 +358,13 @@ disposition; do not assume it matches another library and do not extract it.
 | --- | --- | --- | --- |
 | 001 | Modular monolith / SQLite | Accepted | — |
 | 002 | Source-root cache identity | Accepted | M1 |
-| 003 | Evidence/understanding/plan separation | Proposed | M3 |
-| 004 | Extraction stack/isolation | Proposed | M3 |
-| 005 | Embedding runtime/model | Proposed | M6 |
-| 006 | Confidence calibration | Proposed | M4 |
-| 007 | Immutable plan/execution | Proposed | M1 |
-| 008 | Filename policies | Proposed | M5 |
-| 009 | PySide6 GUI | Proposed | M2 |
-| 010 | SLM deferral | Proposed | M8 |
+| 003 | Evidence/understanding/plan separation | Approved | M3 |
+| 004 | Extraction stack/isolation | Approved in principle | M3 |
+| 005 | Embedding runtime/model | Approved in principle; model gated | M6 |
+| 006 | Confidence calibration | Approved | M4 |
+| 007 | Immutable plan/execution | Approved; required | M1 |
+| 008 | Filename policies | Approved | M5 |
+| 009 | PySide6 GUI | Conditionally approved | M2 |
+| 010 | SLM deferral | Approved | M8 |
 | 011 | External provider interface | Proposed | M9 |
 | 012 | Media packages opaque | Accepted | M7 |
