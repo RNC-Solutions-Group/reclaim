@@ -1,5 +1,8 @@
 # Recommended Immediate Assignment — M1: Migration Spine and Plan Contract
 
+> **Status 2026-11-22:** Implemented on `feat/m1`; this document remains the
+> scope record and acceptance contract. See [`docs/m1/`](../m1/README.md).
+
 **Status:** Proposed. Requires operator authorization.
 **Predecessor:** M0 CP1 corrective foundation (this assignment).
 **Goal:** Deliver a safe, deterministic CLI migration vertical slice before

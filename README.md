@@ -4,12 +4,11 @@ Reclaim is a local-first utility for discovering, inventorying, reconciling,
 organizing, and migrating personal files across multiple computers and backup
 collections — without risking the originals.
 
-> **Status: CP1 + corrective foundation (pre-alpha).** The repository contains a
-> read-only inventory, hashing, exact-duplicate, analysis, and reporting engine,
-> plus the CP1 corrective work (source-root cache identity, schema v2, archive
-> registration). It does **not** yet contain document extraction, a GUI, or a
-> migration executor. Migration execution is a later, separately authorized
-> milestone.
+> **Status: M1 migration spine (pre-alpha).** The repository contains a
+> read-only inventory/hashing engine plus the M1 plan, preview, authorization,
+> journaled copy, verification, resume, and reconciliation subsystem. It does
+> **not** yet contain document extraction, a GUI, or real-data migration
+> authorization. M1 is validated only on synthetic datasets.
 
 ## Why Reclaim exists
 
@@ -62,6 +61,15 @@ reclaim scan   --config /path/to/project.toml
 reclaim hash   --config /path/to/project.toml
 reclaim export --config /path/to/project.toml
 reclaim verify --config /path/to/project.toml --sample 25
+
+# M1 migration spine (synthetic data only)
+reclaim plan --config /path/to/project.toml --destination /path/to/destination
+reclaim preview --config /path/to/project.toml --plan plan-...
+reclaim authorize --config /path/to/project.toml --plan plan-... --digest <sha256>
+reclaim execute --config /path/to/project.toml --plan plan-... --digest <sha256> --dry-run
+reclaim execute --config /path/to/project.toml --plan plan-... --digest <sha256>
+reclaim verify-execution --config /path/to/project.toml --execution exec-...
+reclaim reconcile --config /path/to/project.toml --execution exec-...
 ```
 
 A project file describes the private workspace, one or more sources, and scan
@@ -72,7 +80,7 @@ The workspace holds the SQLite inventory, private CSV reports, and run
 manifests. It must be on a different path from every source; Reclaim rejects
 overlapping source/workspace/destination paths before scanning.
 
-## What CP1 implements
+## What is implemented
 
 | Capability | Status |
 | --- | --- |
@@ -85,8 +93,13 @@ overlapping source/workspace/destination paths before scanning.
 | Data-driven disposition recommendations with rule evidence | Implemented |
 | Source metadata-consistency fingerprints before and after hashing (metadata only, not byte integrity) | Implemented |
 | Private CSV/JSON reports and run manifest | Implemented |
-| Similarity, revision detection, content extraction, and AI assistance | Not implemented (later checkpoint) |
-| Migration planning, destination preview, copy execution, GUI | Not implemented (later checkpoints) |
+| Immutable migration plans with deterministic digests | Implemented (M1) |
+| Host-independent destination validation (paths, collisions, reserved names, links, capacity) | Implemented (M1) |
+| Explicit plan authorization and duplicate policies | Implemented (M1) |
+| Journaled, resumable, copy-only execution with no overwrite | Implemented (M1) |
+| Post-copy SHA-256 verification and balanced reconciliation | Implemented (M1) |
+| Similarity, revision detection, content extraction, and AI assistance | Not implemented (later milestone) |
+| GUI, naming intelligence, real-data migration | Not implemented (later milestones) |
 
 ## Repository layout
 
@@ -100,10 +113,14 @@ src/reclaim/          Reusable inventory and analysis engine
   classify.py         Type profiles and disposition policy engine
   analysis.py         Duplicates, overlap, structure, dispositions
   report.py           Private CSV/JSON writers
+  destination.py      M1 destination policy and validation
+  planning.py         M1 plans, recommendations, overrides, authorization
+  execution.py        M1 journaled copy, resume, verification, reconciliation
   cli.py              Command-line interface
   data/               Generic default type map and policy
 tests/                Synthetic-fixture tests (no real user data)
 docs/cp1/             CP1 architecture, data model, roadmap, decisions
+docs/m1/              M1 architecture, data model, operator guide, test matrix
 docs/product/         Product outlook, architecture assessment, roadmap, ADRs, benchmarks
 docs/cp1-followup/    CP1 corrective work notes
 config/               Synthetic example configuration
@@ -128,11 +145,21 @@ python -m unittest discover -s tests -t .
 The suite builds synthetic trees covering exact duplicates across sources,
 renamed duplicates, same-name/different-content collisions, empty and hidden
 entries, Unicode names, deep paths, junctions/symlinks, hash failures, policy
-precedence, cache reuse, and an end-to-end scan/hash/export run. Tests that
-require junction creation are skipped on platforms where the process is not
-permitted to create one.
+precedence, cache reuse, and an end-to-end scan/hash/export run. M1 adds
+destination policy, plan determinism, authorization invalidation, journaled
+execution, resume, no-overwrite, source-change, destination-race, and
+reconciliation tests. Tests that require junction creation are skipped on
+platforms where the process is not permitted to create one.
 
 ## Documentation
+
+**M1 migration spine**
+
+- [M1 overview](docs/m1/README.md)
+- [M1 architecture and execution model](docs/m1/architecture.md)
+- [M1 data model](docs/m1/data-model.md)
+- [M1 operator guide](docs/m1/operator-guide.md)
+- [M1 test and acceptance matrix](docs/m1/test-matrix.md)
 
 **Product and engineering direction**
 

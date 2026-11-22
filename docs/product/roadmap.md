@@ -73,6 +73,9 @@ alter source content.
 
 ## 4. M1 — Migration spine and plan contract
 
+> **Status 2026-11-22:** Implemented on `feat/m1`, validated with synthetic
+> fixtures; operator review pending. See [`docs/m1/`](../m1/README.md).
+
 **Objective:** Prove that Reclaim can plan and execute a safe migration before
 adding intelligence.
 

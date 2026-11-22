@@ -23,6 +23,9 @@ Historical CP1 documents remain in [`../cp1/`](../cp1/). The CP1 roadmap is
 superseded by the product roadmap; the CP1 audit and architecture remain useful
 background.
 
+M1 implementation documentation is in [`../m1/`](../m1/): architecture, data
+model, operator guide, and the test/acceptance matrix.
+
 ## Status
 
 The product direction is a proposal. The only authorized implementation so far

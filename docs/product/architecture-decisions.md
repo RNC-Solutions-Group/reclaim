@@ -205,7 +205,7 @@ promises numeric confidence.
 
 ## ADR-007 — Plans are immutable, hash-pinned, and separate from execution
 
-**Status:** Approved 2026-11-22; required for M1.
+**Status:** Approved 2026-11-22; required for M1; implemented in `feat/m1`.
 
 **Context.** Migration is consequential. A preview must be exactly what executes.
 
@@ -362,7 +362,7 @@ disposition; do not assume it matches another library and do not extract it.
 | 004 | Extraction stack/isolation | Approved in principle | M3 |
 | 005 | Embedding runtime/model | Approved in principle; model gated | M6 |
 | 006 | Confidence calibration | Approved | M4 |
-| 007 | Immutable plan/execution | Approved; required | M1 |
+| 007 | Immutable plan/execution | Approved; implemented in M1 | M1 |
 | 008 | Filename policies | Approved | M5 |
 | 009 | PySide6 GUI | Conditionally approved | M2 |
 | 010 | SLM deferral | Approved | M8 |

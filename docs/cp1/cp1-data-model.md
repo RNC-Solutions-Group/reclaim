@@ -64,8 +64,10 @@ pattern; the diagram shows the common file case.
 
 ## 3. Implemented CP1 schema
 
-These tables exist today in `src/reclaim/store.py` (schema version 2, including
-the CP1 cache-identity correction). They are the foundation, not the final model.
+These tables exist today in `src/reclaim/store.py` (schema version 3; M1 adds
+analysis, override, plan, authorization, execution, and journal tables). They are
+the foundation, not the final model. See
+[`docs/m1/data-model.md`](../m1/data-model.md) for the M1 schema details.
 
 ### 3.1 `meta`
 
@@ -525,14 +527,15 @@ Rules:
 
 | Target table | CP1 status |
 | --- | --- |
-| `meta`, `sources`, `scan_runs`, `entries`, `hashes`, `hash_cache`, `scan_errors`, `verification_checks` | Implemented (schema v2; root identity added in CP1 follow-through) |
+| `meta`, `sources`, `scan_runs`, `entries`, `hashes`, `hash_cache`, `scan_errors`, `verification_checks` | Implemented (schema v3) |
 | `source_probes` | Not implemented; source probe data is validated in memory only |
-| `analyses`, `recommendations` | Computed at export; not persisted |
-| `duplicate_groups`, `duplicate_members` | Computed at export; not persisted |
-| `overrides` | Not implemented |
-| `plans`, `plan_items`, `plan_edits` | Not implemented |
-| `executions`, `execution_items`, `execution_events` | Not implemented |
-| `destination_verifications`, `audit_events` | Partially represented by `verification_checks` |
+| `analysis_snapshots`, `recommendations` | Implemented in M1 (recommendation persistence) |
+| `duplicate_groups`, `duplicate_members` | Computed at export/planning; not persisted as tables |
+| `overrides` | Implemented in M1 |
+| `plans`, `plan_items` | Implemented in M1; immutable plans, no edit log |
+| `plan_edits` | Not implemented (M1 has no in-place plan editing) |
+| `executions`, `execution_items`, `execution_events` | Implemented in M1 |
+| `destination_verifications`, `audit_events` | Destination hashes/verification are recorded in execution items and `verification_checks`; no dedicated audit table |
 
 This is intentional. CP1 proves the observation layer before committing to
 decision and execution schemas that the operator has not yet reviewed.
