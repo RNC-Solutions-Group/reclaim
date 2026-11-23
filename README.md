@@ -165,8 +165,8 @@ precedence, cache reuse, and an end-to-end scan/hash/export run. M1 adds
 destination policy, whole-path equivalence, plan determinism, authorization
 invalidation, journaled execution, resume, no-overwrite/publication failure,
 source-change, destination-race, verification invalidation/recovery, and
-balanced-vs-successful reconciliation tests. **M2 adds 9 synthetic GUI/service
-tests**, for **122 total passing** on the M2 branch. Tests that require junction
+balanced-vs-successful reconciliation tests. **M2 adds 17 synthetic GUI/service
+tests**, for **130 total passing** on the M2 branch. Tests that require junction
 creation are skipped on platforms where the process is not permitted to create
 one.
 

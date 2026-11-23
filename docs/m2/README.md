@@ -52,6 +52,7 @@ PySide6 through the CLI.
 - [Architecture and GUI boundaries](architecture.md)
 - [Operator guide](user-guide.md)
 - [Test and acceptance matrix](test-matrix.md)
+- [Review-table benchmark](benchmarks.md)
 - [Packaging and Qt/LGPL considerations](packaging.md)
 - [M1 engine documentation](../m1/README.md)
 

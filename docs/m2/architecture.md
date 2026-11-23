@@ -39,8 +39,13 @@ plain Python snapshots/dataclasses from the service.
   non-stoppable bounded service calls in the alpha; they still run off the UI
   thread.
 - Review tables use a source `QAbstractTableModel` plus a filter proxy; no
-  per-row widgets are created. Plan preview is capped at 4,000 displayed
-  destination items.
+  per-row widgets are created. The filter hot path uses indexed
+  `row_at(index)`/`count()` access, never `rows()` full-list materialization.
+  Plan preview is capped at 4,000 displayed destination items. See
+  [review-table benchmarks](benchmarks.md) for latency/memory measurements.
+- Filtering is still synchronous on the GUI thread; at 100,000 synthetic rows
+  measured search latency was in the ~2 second range on the validation host.
+  This is an explicit alpha limitation, not a claim of instantaneous filtering.
 
 ## 4. Application-service boundary
 
@@ -58,6 +63,31 @@ plain Python snapshots/dataclasses from the service.
 The service returns dataclasses (`ReviewRow`, `PlanSnapshot`,
 `ExecutionSnapshot`, `Reconciliation`, `AnalysisBundle`) and dict summaries.
 Widgets do not construct SQL or filesystem operations.
+
+### Plan freshness
+
+A loaded plan snapshot carries its frozen run, policy fingerprint, destination
+(selected and canonical), template, duplicate policy, target-platform rules,
+path budget, and a stable fingerprint of active overrides. The service compares
+these values against current settings, the current run, and the current active
+overrides. If they differ, the plan remains available as a historical artifact
+but is marked stale: authorization/execution controls are disabled until a new
+plan is generated and authorized. The same check runs on project reopen, so a
+newer destination/settings configuration cannot silently inherit an older
+authorized plan.
+
+Plan history uses durable SQLite insertion order (`rowid`) for “latest” and
+listing rather than second-precision timestamps. Rapid plans created in the same
+second therefore reopen in actual creation order; plan digests remain
+independent of this ordering metadata.
+
+### Destination identity
+
+`ProjectSession.create` preserves the operator-selected destination spelling
+separately from the canonical identity. The selected path is passed to the M1A
+validator; link/junction roots and redirected ancestors are rejected at project
+creation and on later destination changes. The plan retains M1A's
+`destination_selected` and canonical `destination_root`.
 
 ## 5. Workflow
 
@@ -133,7 +163,11 @@ finish before the close completes.
 - No installer or code-signed binary is included; packaging is a smoke-tested
   Python wheel plus Qt system dependency.
 - No content extraction, classification, semantic naming, or AI is present.
-- Large-table behavior is implemented with models/filter proxies but was not
-  benchmarked at the full private-collection scale.
+- Large-table behavior is implemented with models/filter proxies but filtering
+  remains synchronous; 100,000-row search measured ~2 seconds on the validation
+  host. Not benchmarked at the full private-collection scale.
+- Plan freshness depends on stored review-fingerprint metadata for plans created
+  by M2; older plans without that fingerprint are conservatively treated as
+  stale when the current configuration cannot be proven equivalent.
 - Stop requests are cooperative between files/items, not an immediate
   interruption of an in-progress file copy.

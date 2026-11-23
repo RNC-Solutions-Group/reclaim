@@ -2,12 +2,22 @@
 
 ## 1. Automated validation
 
-- **122 tests, all passing** on the M2 branch.
+- **130 tests, all passing** on the M2 branch.
 - `python -m unittest discover -s tests -t .`
 - `python -m compileall -q src tests`
 - GUI tests run with `QT_QPA_PLATFORM=offscreen`; no display is required.
 - All fixtures are generated under temporary directories. No real project,
   personal path, external dataset, network service, or model is used.
+
+## 2a. M2A corrective coverage
+
+| Finding | Regression coverage |
+| --- | --- |
+| M2A-01 indexed review access | `tests/test_m2_gui.py::test_filter_does_not_materialize_full_rows`; benchmark at 10k/50k/100k in `docs/m2/benchmarks.md` |
+| M2A-02 selected destination identity | Service tests for selected-path preservation, junction root rejection, redirected ancestor rejection, post-creation destination change, valid physical destination |
+| M2A-03 plan freshness | Service reopen/settings/overrides freshness tests; GUI test that changed settings disable execution and restoration re-enables it |
+| M2A-04 deterministic plan order | Service test creates three plans rapidly and verifies `latest_plan`/`list_plans` follow insertion order |
+- **M2A benchmark:** reproducible script outside unit tests; results and limitations recorded in [benchmarks](benchmarks.md).
 
 ## 2. Test inventory
 

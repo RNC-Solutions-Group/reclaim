@@ -28,7 +28,8 @@ without it.
    `reclaim-project.toml` and a private `workspace/` database/report directory.
 3. Add one or more source directories. Each is inventoried read-only.
 4. Select an existing destination directory. It must be a separate physical
-   directory, not a source, workspace child, link, or junction.
+   directory, not a source, workspace child, link, or junction. The selected
+   spelling is preserved and validated separately from its canonical identity.
 5. Select **Create**.
 
 The project screen shows source availability, destination validation, free
@@ -85,7 +86,8 @@ override reason are visible in the row tooltip and detail pane.
 6. **Authorize exact plan…** and confirm the displayed plan digest. Authorization
    applies only to that digest.
 7. Review decisions or settings changed after planning mark the plan stale and
-   require a new plan.
+   require a new plan. Restoring the exact settings/override state can make the
+   plan current again; otherwise it remains a historical artifact.
 
 ## 6. Execute, pause, and resume
 
