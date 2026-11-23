@@ -123,11 +123,39 @@ class StoreTests(unittest.TestCase):
                 version = store.conn.execute(
                     "SELECT value FROM meta WHERE key='schema_version'"
                 ).fetchone()[0]
-                self.assertEqual(version, "4")
+                self.assertEqual(version, "5")
                 row = store.conn.execute(
                     "SELECT destination_selected, destination_root FROM plans"
                 ).fetchone()
                 self.assertEqual(row["destination_selected"], row["destination_root"])
+
+    def test_v4_database_adds_evidence_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            database = Path(tmp) / "v4.sqlite3"
+            connection = sqlite3.connect(database)
+            connection.execute(
+                "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
+            connection.execute(
+                "INSERT INTO meta(key, value) VALUES ('schema_version', '4')"
+            )
+            connection.commit()
+            connection.close()
+            with Store(database) as store:
+                version = store.conn.execute(
+                    "SELECT value FROM meta WHERE key='schema_version'"
+                ).fetchone()[0]
+                self.assertEqual(version, "5")
+                tables = {
+                    row["name"]
+                    for row in store.conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    )
+                }
+                self.assertTrue(
+                    {"evidence_records", "evidence_occurrences", "evidence_runs"}
+                    <= tables
+                )
 
     def test_cache_is_invalidated_when_source_root_changes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -252,7 +280,7 @@ class StoreTests(unittest.TestCase):
                 version = store.conn.execute(
                     "SELECT value FROM meta WHERE key='schema_version'"
                 ).fetchone()[0]
-                self.assertEqual(version, "4")
+                self.assertEqual(version, "5")
                 columns = {
                     row["name"] for row in store.conn.execute("PRAGMA table_info(hash_cache)")
                 }

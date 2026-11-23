@@ -22,7 +22,7 @@ from .hashing import HashOutcome
 from .paths import canonical_path, root_identity
 from .scanner import EntryRecord
 
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "5"
 ALGORITHM = "sha256"
 
 
@@ -263,6 +263,46 @@ CREATE TABLE IF NOT EXISTS execution_events (
     detail_json TEXT
 );
 
+CREATE TABLE IF NOT EXISTS evidence_runs (
+    evidence_run_id TEXT PRIMARY KEY,
+    source_run_id TEXT NOT NULL,
+    config_fingerprint TEXT NOT NULL,
+    status TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    counts_json TEXT
+);
+
+CREATE TABLE IF NOT EXISTS evidence_records (
+    evidence_id TEXT PRIMARY KEY,
+    cache_key TEXT NOT NULL UNIQUE,
+    content_sha256 TEXT NOT NULL,
+    evidence_schema_version INTEGER NOT NULL,
+    extractor_id TEXT NOT NULL,
+    extractor_version TEXT NOT NULL,
+    config_fingerprint TEXT NOT NULL,
+    source_format TEXT NOT NULL,
+    status TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    error_code TEXT,
+    error_message TEXT,
+    text_chars INTEGER NOT NULL DEFAULT 0,
+    duration_ms INTEGER,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS evidence_occurrences (
+    evidence_id TEXT NOT NULL REFERENCES evidence_records(evidence_id) ON DELETE CASCADE,
+    evidence_run_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    entry_id INTEGER NOT NULL,
+    source_id TEXT NOT NULL,
+    source_rel_path TEXT NOT NULL,
+    content_sha256 TEXT NOT NULL,
+    PRIMARY KEY (evidence_run_id, evidence_id, entry_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_entries_run_source
     ON entries(run_id, source_id);
 CREATE INDEX IF NOT EXISTS idx_entries_run_parent
@@ -290,6 +330,10 @@ CREATE INDEX IF NOT EXISTS idx_execution_items_execution
     ON execution_items(execution_id, item_id);
 CREATE INDEX IF NOT EXISTS idx_execution_events_execution
     ON execution_events(execution_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_evidence_occurrences_run
+    ON evidence_occurrences(run_id, entry_id);
+CREATE INDEX IF NOT EXISTS idx_evidence_records_content
+    ON evidence_records(content_sha256, status);
 """
 
 
@@ -329,11 +373,16 @@ class Store:
             self._migrate_v1_to_v2()
             self._migrate_v2_to_v3()
             self._migrate_v3_to_v4()
+            self._migrate_v4_to_v5()
         elif row["value"] == "2":
             self._migrate_v2_to_v3()
             self._migrate_v3_to_v4()
+            self._migrate_v4_to_v5()
         elif row["value"] == "3":
             self._migrate_v3_to_v4()
+            self._migrate_v4_to_v5()
+        elif row["value"] == "4":
+            self._migrate_v4_to_v5()
         elif row["value"] != SCHEMA_VERSION:
             raise SchemaError(
                 f"Database schema {row['value']} is not supported by this build "
@@ -419,11 +468,24 @@ class Store:
         )
         self.conn.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?)",
-            (SCHEMA_VERSION,),
+            ("4",),
         )
         self.conn.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES ('m1a_destination_selected', ?)",
             ("raw selected destination path recorded separately from canonical root",),
+        )
+        self.conn.commit()
+
+    def _migrate_v4_to_v5(self) -> None:
+        """Add M3 evidence records, occurrence links, and evidence runs."""
+
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?)",
+            (SCHEMA_VERSION,),
+        )
+        self.conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES ('m3_evidence_schema', ?)",
+            ("M3 content-addressed evidence records and occurrence links added",),
         )
         self.conn.commit()
 
