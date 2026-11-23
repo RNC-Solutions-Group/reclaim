@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import shutil
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ from ..destination import DestinationPolicy, validate_destination_root
 from ..errors import ReclaimError
 from ..execution import execute_plan, reconcile_execution, verify_execution
 from ..hashing import hash_file
+from ..paths import canonical_path
 from ..planning import (
     PlanItem,
     PlanSettings,
@@ -38,7 +40,9 @@ from ..planning import (
     get_plan_items,
     get_plan_row,
     list_overrides,
+    policy_fingerprint,
     remove_override,
+    review_fingerprint,
 )
 from ..report import build_all
 from ..scanner import SourceScanner
@@ -110,6 +114,13 @@ class PlanSnapshot:
     destination_root: str
     destination_selected: str
     destination_template: str
+    duplicate_policy: str
+    target_platform: str
+    max_path_length: int
+    source_run_id: str
+    analysis_id: str
+    policy_fingerprint: str
+    review_fingerprint: str
     authorized: bool
     manifest_path: str = ""
     items_path: str = ""
@@ -239,6 +250,12 @@ def _format_bytes(value: int) -> str:
     return f"{value} B"
 
 
+def _selected_path(value: str | Path) -> Path:
+    """Preserve the operator's path spelling; do not resolve links."""
+
+    return Path(os.path.abspath(Path(value).expanduser()))
+
+
 def _toml_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
@@ -255,6 +272,9 @@ class ProjectSession:
         self.plan_stale = False
         self.last_execution_id = ""
         self.refresh()
+        latest = self.latest_plan()
+        if latest is not None:
+            self.plan_stale = not self.plan_is_current(latest)
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -280,7 +300,7 @@ class ProjectSession:
             raise GuiError("Project name is required")
         if not sources:
             raise GuiError("At least one source directory is required")
-        destination_path = Path(destination).expanduser().resolve()
+        destination_path = _selected_path(destination)
         if not destination_path.is_dir():
             raise GuiError(f"Destination directory does not exist: {destination_path}")
 
@@ -383,6 +403,13 @@ class ProjectSession:
             return None
         return Path(self.settings.destination)
 
+    @property
+    def destination_identity(self) -> Path | None:
+        """Canonical destination identity, when a selected path exists."""
+
+        destination = self.destination
+        return canonical_path(destination) if destination is not None else None
+
     def source_views(self) -> list[SourceView]:
         output: list[SourceView] = []
         for source in self.config.sources:
@@ -441,7 +468,8 @@ class ProjectSession:
         )
 
     def set_destination(self, destination: str | Path) -> DestinationStatus:
-        path = Path(destination).expanduser()
+        path = _selected_path(destination)
+        previous = self.settings
         self.settings = _GuiSettings(
             destination=str(path),
             destination_template=self.settings.destination_template,
@@ -449,9 +477,13 @@ class ProjectSession:
             target_platform=self.settings.target_platform,
             max_path_length=self.settings.max_path_length,
         )
+        status = self.destination_status()
+        if status.issues:
+            self.settings = previous
+            raise GuiError("; ".join(status.issues))
         _save_gui_settings(self.config, self.settings)
         self.plan_stale = True
-        return self.destination_status()
+        return status
 
     def update_plan_settings(
         self,
@@ -473,6 +505,7 @@ class ProjectSession:
             max_path_length=max_path_length,
         )
         _save_gui_settings(self.config, self.settings)
+        self.plan_stale = True
 
     # -- worker store ------------------------------------------------------
 
@@ -838,23 +871,101 @@ class ProjectSession:
             destination_root=row["destination_root"],
             destination_selected=row["destination_selected"],
             destination_template=row["destination_template"],
+            duplicate_policy=row["duplicate_policy"],
+            target_platform=row["target_platform"],
+            max_path_length=row["max_path_length"],
+            source_run_id=row["source_run_id"],
+            analysis_id=row["analysis_id"],
+            policy_fingerprint=row["policy_fingerprint"],
+            review_fingerprint=str(summary.get("review_fingerprint", "")),
             authorized=authorized,
         )
 
     def latest_plan(self) -> PlanSnapshot | None:
         row = self.store.conn.execute(
-            "SELECT plan_id FROM plans ORDER BY created_at DESC, plan_id DESC LIMIT 1"
+            "SELECT plan_id FROM plans ORDER BY rowid DESC LIMIT 1"
         ).fetchone()
         if row is None:
             return None
         return self._plan_snapshot(self.store, row["plan_id"])
+
+    def plan_is_current(
+        self,
+        plan: PlanSnapshot,
+        *,
+        destination: str | Path | None = None,
+        destination_template: str | None = None,
+        duplicate_policy: str | None = None,
+        target_platform: str | None = None,
+        max_path_length: int | None = None,
+        overrides: list[dict[str, Any]] | None = None,
+    ) -> bool:
+        """Check the loaded plan against the current effective configuration.
+
+        Historical plans remain inspectable even when this returns False; the
+        desktop disables execution until a matching plan is authorized.
+        """
+
+        if not self.run_id or plan.source_run_id != self.run_id:
+            return False
+        selected = (
+            _selected_path(destination)
+            if destination is not None
+            else self.destination
+        )
+        if selected is None:
+            return False
+        if not selected.is_dir():
+            return False
+        if os.path.normcase(str(selected)) != os.path.normcase(
+            str(Path(plan.destination_selected))
+        ):
+            return False
+        if os.path.normcase(str(canonical_path(selected))) != os.path.normcase(
+            str(canonical_path(plan.destination_root))
+        ):
+            return False
+        current_template = (
+            destination_template
+            if destination_template is not None
+            else self.settings.destination_template
+        )
+        if current_template != plan.destination_template:
+            return False
+        current_policy = (
+            duplicate_policy
+            if duplicate_policy is not None
+            else self.settings.duplicate_policy
+        )
+        if current_policy != plan.duplicate_policy:
+            return False
+        current_platform = (
+            target_platform
+            if target_platform is not None
+            else self.settings.target_platform
+        ) or DestinationPolicy.for_host().target_platform
+        if current_platform != plan.target_platform:
+            return False
+        current_max = (
+            max_path_length
+            if max_path_length is not None
+            else self.settings.max_path_length
+        )
+        if current_max != plan.max_path_length:
+            return False
+        if plan.policy_fingerprint != policy_fingerprint(self.config):
+            return False
+        current_overrides = (
+            overrides if overrides is not None else list_overrides(self.store)
+        )
+        return plan.review_fingerprint == review_fingerprint(current_overrides)
 
     def list_plans(self) -> list[dict[str, Any]]:
         return [
             dict(row)
             for row in self.store.conn.execute(
                 "SELECT plan_id, plan_digest, status, created_at, summary_json "
-                "FROM plans ORDER BY created_at DESC, plan_id DESC"
+                "FROM plans ORDER BY rowid DESC"
             )
         ]
 
@@ -930,12 +1041,12 @@ class ProjectSession:
         if plan_id:
             row = self.store.conn.execute(
                 "SELECT execution_id FROM executions WHERE plan_id=? "
-                "ORDER BY started_at DESC LIMIT 1",
+                "ORDER BY rowid DESC LIMIT 1",
                 (plan_id,),
             ).fetchone()
         else:
             row = self.store.conn.execute(
-                "SELECT execution_id FROM executions ORDER BY started_at DESC LIMIT 1"
+                "SELECT execution_id FROM executions ORDER BY rowid DESC LIMIT 1"
             ).fetchone()
         return self._execution_snapshot(self.store, row["execution_id"]) if row else None
 

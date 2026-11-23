@@ -8,6 +8,7 @@ import time
 import unittest
 from pathlib import Path
 from threading import Event
+from unittest import mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -119,7 +120,6 @@ class M2GuiTests(unittest.TestCase):
             row for row in self.window.review_model.rows() if row.rel_path.endswith("b.pdf")
         )
         self.assertEqual(refreshed.effective_plan, "exclude")
-        self.assertTrue(self.session.plan_stale)
         self.window.generate_plan()
         self._wait()
         self.assertEqual(self.window.plan.summary["copy_items"], 1)
@@ -158,3 +158,32 @@ class M2GuiTests(unittest.TestCase):
         self._wait()
         self.assertEqual(self.window.execution.status, "complete")
         self.assertFalse(self.window.resume_button.isEnabled())
+
+    def test_filter_does_not_materialize_full_rows(self) -> None:
+        self._inventory()
+        with mock.patch.object(
+            self.window.review_model,
+            "rows",
+            side_effect=AssertionError("filter hot path used rows()"),
+        ):
+            self.window.review_proxy.set_query("a.pdf")
+            self.assertGreaterEqual(self.window.review_proxy.rowCount(), 1)
+            self.window.review_proxy.set_mode("copy")
+            self.assertGreaterEqual(self.window.review_proxy.rowCount(), 1)
+
+    def test_changed_settings_gate_execution_until_restored(self) -> None:
+        self._inventory()
+        self.window.generate_plan()
+        self._wait()
+        self.window.authorize_plan()
+        self._wait()
+        self.assertTrue(self.window.execute_button.isEnabled())
+        original = self.window.template_edit.text()
+        self.window.template_edit.setText("{source_id}/changed/{rel_path}")
+        self.app.processEvents()
+        self.assertTrue(self.session.plan_stale)
+        self.assertFalse(self.window.execute_button.isEnabled())
+        self.window.template_edit.setText(original)
+        self.app.processEvents()
+        self.assertFalse(self.session.plan_stale)
+        self.assertTrue(self.window.execute_button.isEnabled())

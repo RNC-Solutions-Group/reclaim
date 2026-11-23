@@ -71,7 +71,17 @@ class ReviewTableModel(QAbstractTableModel):
         self.endResetModel()
 
     def rows(self) -> list[ReviewRow]:
+        """Compatibility accessor; UI hot paths should use ``row_at``."""
+
         return list(self._rows)
+
+    def row_at(self, row: int) -> ReviewRow:
+        """Indexed read-only access without materializing the full list."""
+
+        return self._rows[row]
+
+    def count(self) -> int:
+        return len(self._rows)
 
     def rowCount(self, parent=QModelIndex()) -> int:
         return 0 if parent.isValid() else len(self._rows)
@@ -179,10 +189,14 @@ class ReviewFilterProxy(QSortFilterProxyModel):
         self.invalidateFilter()
 
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
-        model = self.sourceModel()
-        if model is None or source_row >= len(model.rows()):  # type: ignore[attr-defined]
+        # The unfiltered view is the common case; avoid even indexed lookup and
+        # string work when no criterion is active.
+        if not self._query and self._mode == "all":
             return True
-        row = model.rows()[source_row]  # type: ignore[attr-defined]
+        model = self.sourceModel()
+        if model is None or source_row >= model.count():  # type: ignore[attr-defined]
+            return True
+        row = model.row_at(source_row)  # type: ignore[attr-defined]
         if self._query:
             haystack = " ".join(
                 (

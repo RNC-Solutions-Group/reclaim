@@ -7,9 +7,9 @@ import unittest
 from pathlib import Path
 from threading import Event
 
-from .helpers import write_bytes
+from .helpers import make_junction, write_bytes
 
-from reclaim.gui.services import ProjectSession
+from reclaim.gui.services import GuiError, ProjectSession
 
 
 class M2ServiceTests(unittest.TestCase):
@@ -146,3 +146,112 @@ class M2ServiceTests(unittest.TestCase):
         target.write_bytes(b"preexisting")
         plan = self._plan(session)
         self.assertEqual(plan.summary["conflicts"], 1)
+
+    def test_selected_destination_path_is_preserved(self) -> None:
+        session = self._session()
+        self.assertEqual(
+            session.settings.destination, str(self.destination.absolute())
+        )
+        self.assertEqual(session.destination, self.destination.absolute())
+        self._inventory(session)
+        plan = self._plan(session)
+        self.assertEqual(
+            Path(plan.destination_selected), self.destination.absolute()
+        )
+
+    def test_junction_destination_is_rejected_at_creation(self) -> None:
+        target = self.base / "physical-target"
+        target.mkdir()
+        link = self.base / "linked-destination"
+        if not make_junction(link, target):
+            self.skipTest("junction/symlink creation not permitted")
+        with self.assertRaises(GuiError):
+            ProjectSession.create(
+                project_dir=self.base / "linked-project",
+                project_name="Linked",
+                sources=[("Source A", self.source_root)],
+                destination=link,
+            )
+
+    def test_redirected_destination_ancestor_is_rejected(self) -> None:
+        real_parent = self.base / "real-parent"
+        real_parent.mkdir()
+        (real_parent / "destination").mkdir()
+        linked_parent = self.base / "linked-parent"
+        if not make_junction(linked_parent, real_parent):
+            self.skipTest("junction/symlink creation not permitted")
+        with self.assertRaises(GuiError):
+            ProjectSession.create(
+                project_dir=self.base / "redirect-project",
+                project_name="Redirected",
+                sources=[("Source A", self.source_root)],
+                destination=linked_parent / "destination",
+            )
+
+    def test_destination_change_after_creation_blocks_plan(self) -> None:
+        session = self._session()
+        moved = self.base / "moved-destination"
+        self.destination.rename(moved)
+        if not make_junction(self.destination, moved):
+            self.skipTest("junction/symlink creation not permitted")
+        with self.assertRaises(GuiError):
+            session.set_destination(self.destination)
+        self._inventory(session)
+        with self.assertRaises(Exception):
+            self._plan(session)
+
+    def test_plan_freshness_survives_reopen_and_detects_changes(self) -> None:
+        session = self._session()
+        self._inventory(session)
+        plan = self._plan(session)
+        session.authorize(plan)
+        self.assertTrue(session.plan_is_current(session.latest_plan()))
+        config_path = session.config.config_path
+        session.close()
+        self.sessions.remove(session)
+
+        reopened = ProjectSession.open(config_path)
+        self.sessions.append(reopened)
+        reopened_plan = reopened.latest_plan()
+        self.assertIsNotNone(reopened_plan)
+        self.assertTrue(reopened.plan_is_current(reopened_plan))
+        reopened.update_plan_settings(
+            template="{source_id}/{name}",
+            duplicate_policy=reopened.settings.duplicate_policy,
+            target_platform=reopened.settings.target_platform,
+            max_path_length=reopened.settings.max_path_length,
+        )
+        self.assertFalse(reopened.plan_is_current(reopened_plan))
+        reopened.update_plan_settings(
+            template=reopened_plan.destination_template,
+            duplicate_policy=reopened_plan.duplicate_policy,
+            target_platform=reopened_plan.target_platform,
+            max_path_length=reopened_plan.max_path_length,
+        )
+        self.assertTrue(reopened.plan_is_current(reopened_plan))
+
+        bundle = reopened.analyze()
+        target = next(row for row in bundle.rows if row.rel_path.endswith("b.pdf"))
+        reopened.apply_overrides([target], "exclude", "freshness test")
+        self.assertFalse(reopened.plan_is_current(reopened_plan))
+        refreshed = reopened.analyze()
+        target = next(row for row in refreshed.rows if row.rel_path.endswith("b.pdf"))
+        reopened.remove_overrides([target])
+        self.assertTrue(reopened.plan_is_current(reopened_plan))
+
+    def test_latest_plan_uses_insertion_order_for_same_timestamp(self) -> None:
+        session = self._session()
+        self._inventory(session)
+        session.analyze()
+        plan_ids = []
+        for template in ("{source_id}/{rel_path}", "{source_id}/v2/{rel_path}", "{source_id}/v3/{rel_path}"):
+            session.update_plan_settings(
+                template=template,
+                duplicate_policy="prefer_one",
+                target_platform="",
+                max_path_length=240,
+            )
+            plan_ids.append(session.build_plan().plan_id)
+        self.assertEqual(session.latest_plan().plan_id, plan_ids[-1])
+        self.assertEqual(session.list_plans()[0]["plan_id"], plan_ids[-1])
+        self.assertEqual(len(set(plan_ids)), 3)

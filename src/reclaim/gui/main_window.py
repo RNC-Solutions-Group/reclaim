@@ -90,6 +90,7 @@ class MainWindow(QMainWindow):
         self.task: Task | None = None
         self._busy = False
         self._close_after_task = False
+        self._loading_settings = False
 
         self.setWindowTitle(APP_TITLE)
         self.resize(1320, 860)
@@ -384,6 +385,11 @@ class MainWindow(QMainWindow):
         self.max_path_spin.setRange(64, 4096)
         self.max_path_spin.setValue(240)
         settings_form.addRow("Maximum path length:", self.max_path_spin)
+        self.plan_destination_edit.textChanged.connect(self._plan_controls_changed)
+        self.template_edit.textChanged.connect(self._plan_controls_changed)
+        self.duplicate_combo.currentIndexChanged.connect(self._plan_controls_changed)
+        self.platform_combo.currentIndexChanged.connect(self._plan_controls_changed)
+        self.max_path_spin.valueChanged.connect(self._plan_controls_changed)
         self.generate_button = QPushButton("Generate immutable plan")
         self.generate_button.clicked.connect(self.generate_plan)
         settings_form.addRow(self.generate_button)
@@ -517,14 +523,20 @@ class MainWindow(QMainWindow):
             f"Project: {session.project_name}\nConfig: {_display_path(session.config.config_path)}\n"
             f"Workspace: {_display_path(session.config.workspace)}"
         )
-        self.destination_edit.setText(_display_path(session.destination))
-        self.plan_destination_edit.setText(self.destination_edit.text())
-        self.plan_destination_edit.setCursorPosition(0)
-        self.template_edit.setText(session.settings.destination_template)
-        self.duplicate_combo.setCurrentText(session.settings.duplicate_policy)
-        index = self.platform_combo.findData(session.settings.target_platform)
-        self.platform_combo.setCurrentIndex(max(0, index))
-        self.max_path_spin.setValue(session.settings.max_path_length)
+        self._loading_settings = True
+        try:
+            self.destination_edit.setText(_display_path(session.destination))
+            self.plan_destination_edit.setText(self.destination_edit.text())
+            self.plan_destination_edit.setCursorPosition(0)
+            self.template_edit.setText(session.settings.destination_template)
+            self.duplicate_combo.setCurrentText(session.settings.duplicate_policy)
+            index = self.platform_combo.findData(session.settings.target_platform)
+            self.platform_combo.setCurrentIndex(max(0, index))
+            self.max_path_spin.setValue(session.settings.max_path_length)
+        finally:
+            self._loading_settings = False
+        if self.plan is not None:
+            session.plan_stale = not session.plan_is_current(self.plan)
         self.refresh_project_view()
         self._refresh_plan_ui()
         self._refresh_results_ui()
@@ -661,8 +673,12 @@ class MainWindow(QMainWindow):
             return
         self.destination_edit.setText(_display_path(status.path))
         self.destination_edit.setCursorPosition(0)
-        self.plan_destination_edit.setText(_display_path(status.path))
-        self.plan_destination_edit.setCursorPosition(0)
+        self._loading_settings = True
+        try:
+            self.plan_destination_edit.setText(_display_path(status.path))
+            self.plan_destination_edit.setCursorPosition(0)
+        finally:
+            self._loading_settings = False
         if status.issues:
             self.destination_status_label.setText("; ".join(status.issues))
             self.destination_status_label.setStyleSheet("color: #a33;")
@@ -693,11 +709,14 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             self._critical("Destination rejected", str(exc))
             return
-        self.plan_destination_edit.setText(_display_path(status.path))
-        self.plan_destination_edit.setCursorPosition(0)
+        self._loading_settings = True
+        try:
+            self.plan_destination_edit.setText(_display_path(status.path))
+            self.plan_destination_edit.setCursorPosition(0)
+        finally:
+            self._loading_settings = False
         self._refresh_destination_status()
-        self._mark_plan_stale("Destination changed; generate a new plan.")
-        self._update_action_states()
+        self._refresh_plan_freshness()
 
     # -- operations --------------------------------------------------------
 
@@ -772,6 +791,7 @@ class MainWindow(QMainWindow):
             f"({bundle.duplicate_occurrences:,} occurrences) · decisions apply to the next plan."
         )
         self._filter_review()
+        self._refresh_plan_freshness()
         self.tabs.setCurrentIndex(1)
         self.status_label.setText(
             "Review complete. Toggle Include, or select rows for bulk decisions; "
@@ -788,7 +808,7 @@ class MainWindow(QMainWindow):
         for proxy_index in selection:
             source_index = self.review_proxy.mapToSource(proxy_index)
             if source_index.isValid():
-                rows.append(self.review_model.rows()[source_index.row()])
+                rows.append(self.review_model.row_at(source_index.row()))
         return rows
 
     def _review_selection_changed(self) -> None:
@@ -938,6 +958,7 @@ class MainWindow(QMainWindow):
 
     def _plan_ready(self, plan: PlanSnapshot) -> None:
         self.plan = plan
+        self.session.plan_stale = not self.session.plan_is_current(plan)
         self._refresh_plan_ui()
         self.tabs.setCurrentIndex(2)
         if plan.issues:
@@ -949,6 +970,51 @@ class MainWindow(QMainWindow):
                 "Plan ready. Review the destination tree, then authorize the exact digest."
             )
 
+    def _plan_controls_changed(self) -> None:
+        if self._loading_settings or self.session is None or self.plan is None:
+            return
+        self._refresh_plan_freshness()
+
+    def _refresh_plan_freshness(self) -> None:
+        if self.session is None:
+            return
+        if self.plan is None:
+            self.session.plan_stale = False
+            self._update_action_states()
+            return
+        self.session.plan_stale = not self.session.plan_is_current(
+            self.plan,
+            destination=self.plan_destination_edit.text().strip(),
+            destination_template=self.template_edit.text(),
+            duplicate_policy=self.duplicate_policy(),
+            target_platform=str(self.platform_combo.currentData() or ""),
+            max_path_length=self.max_path_spin.value(),
+        )
+        self._update_plan_warning(self.plan)
+        self._update_action_states()
+
+    def _update_plan_warning(self, plan: PlanSnapshot) -> None:
+        if plan.issues:
+            self.plan_warning.setText(
+                "This plan has unresolved conflicts. Authorization is disabled until "
+                "review decisions produce a conflict-free plan."
+            )
+            self.plan_warning.setStyleSheet("color: #a33;")
+        elif self.session is not None and self.session.plan_stale:
+            self.plan_warning.setText(
+                "Current settings/review decisions differ from this plan. "
+                "Generate and authorize a new plan."
+            )
+            self.plan_warning.setStyleSheet("color: #a33;")
+        elif plan.authorized:
+            self.plan_warning.setText("Authorized for this exact digest.")
+            self.plan_warning.setStyleSheet("color: #276b2b;")
+        else:
+            self.plan_warning.setText(
+                "Not authorized. Authorization is required before execution."
+            )
+            self.plan_warning.setStyleSheet("color: #a33;")
+
     def _refresh_plan_ui(self) -> None:
         self.plan_tree.clear()
         self.plan_issues.clear()
@@ -959,7 +1025,6 @@ class MainWindow(QMainWindow):
             self.plan_counts_label.clear()
             self.plan_warning.clear()
             self.plan_notes.clear()
-            self.plan_id_label.setStyleSheet("")
             self._update_action_states()
             return
         plan = self.plan
@@ -968,8 +1033,10 @@ class MainWindow(QMainWindow):
         self.plan_status_label.setText(plan.status)
         summary = plan.summary
         self.plan_counts_label.setText(
-            f"{summary.get('total_items', 0):,} items · {summary.get('copy_items', 0):,} copies · "
-            f"{_size(summary.get('copy_bytes', 0))} · {summary.get('conflicts', 0):,} conflicts"
+            f"{summary.get('total_items', 0):,} items · "
+            f"{summary.get('copy_items', 0):,} copies · "
+            f"{_size(summary.get('copy_bytes', 0))} · "
+            f"{summary.get('conflicts', 0):,} conflicts"
         )
         for issue in plan.issues:
             item = QListWidgetItem(
@@ -977,21 +1044,7 @@ class MainWindow(QMainWindow):
             )
             item.setToolTip(str(issue))
             self.plan_issues.addItem(item)
-        if plan.issues:
-            self.plan_warning.setText(
-                "This plan has unresolved conflicts. Authorization is disabled until "
-                "review decisions produce a conflict-free plan."
-            )
-        elif self.session and self.session.plan_stale:
-            self.plan_warning.setText(
-                "Review decisions changed after this plan was created. Generate a new plan."
-            )
-        elif plan.authorized:
-            self.plan_warning.setText("Authorized for this exact digest.")
-            self.plan_warning.setStyleSheet("color: #276b2b;")
-        else:
-            self.plan_warning.setText("Not authorized. Authorization is required before execution.")
-            self.plan_warning.setStyleSheet("color: #a33;")
+        self._update_plan_warning(plan)
         self._build_plan_tree(plan)
         self._update_action_states()
 
