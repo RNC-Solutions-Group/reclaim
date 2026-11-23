@@ -1,8 +1,8 @@
 """Reclaim: local-first file discovery, reconciliation, and migration planning.
 
-CP1 scope: read-only inventory, hashing, and analysis.  This package
-deliberately contains no copying, moving, or deletion code.
+The engine is a modular Python package with a CLI and a PySide6 desktop shell.
+Source data is read-only; migration execution is copy-only and journaled.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 TOOL_NAME = "reclaim"

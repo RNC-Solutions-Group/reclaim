@@ -11,7 +11,8 @@ import uuid
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from threading import Event
+from typing import Any, Callable
 
 from .config import ProjectConfig
 from .destination import (
@@ -386,6 +387,8 @@ def execute_plan(
     dry_run_mode: bool = False,
     max_items: int | None = None,
     retry_failed: bool = True,
+    progress: Callable[[dict[str, Any]], None] | None = None,
+    stop_event: Event | None = None,
 ) -> ExecutionResult:
     if dry_run_mode:
         summary = dry_run(store, config, plan_id)
@@ -446,7 +449,19 @@ def execute_plan(
             ).fetchone()
 
     processed = 0
+    total_copy_items = len(preflight.copy_items)
+    if progress is not None:
+        progress(
+            {
+                "execution_id": execution_id,
+                "processed": 0,
+                "total": total_copy_items,
+                "message": "Execution started",
+            }
+        )
     for item in preflight.copy_items:
+        if stop_event is not None and stop_event.is_set():
+            break
         if max_items is not None and processed >= max_items:
             break
         current = store.conn.execute(
@@ -500,6 +515,24 @@ def execute_plan(
             preflight,
             prior=current,
         )
+        state_row = store.conn.execute(
+            "SELECT state, error_code FROM execution_items WHERE execution_id=? AND item_id=?",
+            (execution_id, item.item_id),
+        ).fetchone()
+        if progress is not None:
+            progress(
+                {
+                    "execution_id": execution_id,
+                    "processed": processed,
+                    "total": total_copy_items,
+                    "source_id": item.source_id,
+                    "rel_path": item.source_rel_path,
+                    "destination_rel": item.destination_rel,
+                    "state": state_row["state"] if state_row else "",
+                    "error_code": state_row["error_code"] if state_row else "",
+                    "message": "Item processed",
+                }
+            )
 
     counts = _execution_counts(store, execution_id)
     failed = counts.get("failed", 0) + counts.get("conflict", 0)

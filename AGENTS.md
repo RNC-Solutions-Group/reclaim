@@ -82,6 +82,7 @@ Plan edits must not mutate the inventory or source filesystem. Validate collisio
 - Prefer a modular Python core with clear interfaces; justify additional dependencies and keep offline installation/distribution in mind.
 - Use durable local storage (SQLite is a strong default) for inventory, provenance, decisions, plans, and execution state; separate observed facts from mutable user decisions at the schema level.
 - Keep path resolution, filesystem access, policy evaluation, analysis, persistence, reporting, and presentation independently testable.
+- Keep desktop presentation thin: widgets must not query SQLite or traverse/copy the filesystem directly; use application services and background workers. Use virtualized models for inventories, preserve engine authorization/validation contracts, and never let the GUI bypass a plan digest or destination-safety check.
 - Make long-running scans observable and restartable when feasible. Avoid rehashing unchanged data without checking cache validity.
 - Keep configuration, schemas, and public APIs documented and versionable. Avoid hardcoded migration-specific behavior.
 - Use structured diagnostics with clear failure categories, but do not leak private content into routine logs or development artifacts.
