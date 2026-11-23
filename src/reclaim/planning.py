@@ -138,6 +138,38 @@ def analysis_id_for(run_id: str, policy_fp: str) -> str:
     )[:16]
 
 
+def review_fingerprint(overrides: list[dict[str, Any]]) -> str:
+    """Stable fingerprint of the overrides that affect a plan.
+
+    The fingerprint deliberately excludes database IDs/timestamps.  It is
+    stored in plan summary metadata for desktop freshness checks and does not
+    alter the immutable plan body/digest.
+    """
+
+    normalized = [
+        {
+            "scope": row.get("scope", ""),
+            "source_id": row.get("source_id", ""),
+            "target_rel": row.get("target_rel", ""),
+            "disposition": row.get("disposition", ""),
+            "destination_rel": row.get("destination_rel") or "",
+            "reason": row.get("reason", ""),
+        }
+        for row in overrides
+    ]
+    normalized.sort(
+        key=lambda row: (
+            row["source_id"],
+            row["target_rel"],
+            row["scope"],
+            row["disposition"],
+            row["destination_rel"],
+            row["reason"],
+        )
+    )
+    return _sha256(json.dumps(normalized, sort_keys=True).encode("utf-8"))
+
+
 def _source_snapshot(store: Store, run_id: str) -> dict[str, Any]:
     run = store.get_run(run_id)
     fingerprints = json.loads(run["source_fingerprints_json"] or "{}")
@@ -584,6 +616,7 @@ def build_plan(
         if issue.item_id is None
     ]
     summary = _summary(items, global_issues)
+    summary["review_fingerprint"] = review_fingerprint(overrides)
     body = _plan_body(
         source_run_id=run_id,
         analysis_id=analysis_id,

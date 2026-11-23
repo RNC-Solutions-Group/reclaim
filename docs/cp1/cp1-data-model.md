@@ -64,7 +64,7 @@ pattern; the diagram shows the common file case.
 
 ## 3. Implemented CP1 schema
 
-These tables exist today in `src/reclaim/store.py` (schema version 4; M1 adds
+These tables exist today in `src/reclaim/store.py` (schema version 5; M3 adds
 analysis, override, plan, authorization, execution, and journal tables). They are
 the foundation, not the final model. See
 [`docs/m1/data-model.md`](../m1/data-model.md) for the M1 schema details.
@@ -527,7 +527,8 @@ Rules:
 
 | Target table | CP1 status |
 | --- | --- |
-| `meta`, `sources`, `scan_runs`, `entries`, `hashes`, `hash_cache`, `scan_errors`, `verification_checks` | Implemented (schema v4) |
+| `meta`, `sources`, `scan_runs`, `entries`, `hashes`, `hash_cache`, `scan_errors`, `verification_checks` | Implemented (schema v5) |
+| `evidence_records`, `evidence_occurrences`, `evidence_runs` | Implemented in M3; content-addressed evidence cache and provenance links |
 | `source_probes` | Not implemented; source probe data is validated in memory only |
 | `analysis_snapshots`, `recommendations` | Implemented in M1 (recommendation persistence) |
 | `duplicate_groups`, `duplicate_members` | Computed at export/planning; not persisted as tables |

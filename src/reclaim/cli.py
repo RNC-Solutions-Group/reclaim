@@ -46,6 +46,9 @@ from .execution import (
     reconcile_execution,
     verify_execution,
 )
+from .evidence.contracts import ExtractionLimits
+from .evidence.registry import EvidenceSettings
+from .evidence.service import EvidenceService
 
 EXIT_OK = 0
 EXIT_ERROR = 2
@@ -53,6 +56,7 @@ EXIT_EXECUTION_FAILURE = 3
 EXIT_INCOMPLETE = 4
 EXIT_VERIFICATION_FAILURE = 5
 EXIT_RECONCILIATION_FAILURE = 6
+EXIT_EVIDENCE_FAILURE = 7
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -159,6 +163,33 @@ def main(argv: list[str] | None = None) -> int:
     override_remove.add_argument("--config", required=True)
     override_remove.add_argument("--id", required=True)
     override_remove.set_defaults(func=command_override_remove)
+
+    evidence = subcommands.add_parser(
+        "evidence", help="Extract bounded, provenance-rich evidence from hashed files"
+    )
+    evidence.add_argument("--config", required=True)
+    evidence.add_argument("--run", default=None)
+    evidence.add_argument("--timeout", type=float, default=None)
+    evidence.add_argument("--max-input-mb", type=int, default=None)
+    evidence.add_argument("--max-text-chars", type=int, default=None)
+    evidence.add_argument("--retry-failures", action="store_true")
+    evidence.add_argument("--out", default=None, help="Optional evidence export directory")
+    evidence.set_defaults(func=command_evidence)
+
+    evidence_stats = subcommands.add_parser(
+        "evidence-stats", help="Show evidence coverage and cache statistics"
+    )
+    evidence_stats.add_argument("--config", required=True)
+    evidence_stats.add_argument("--evidence-run", default=None)
+    evidence_stats.set_defaults(func=command_evidence_stats)
+
+    evidence_export = subcommands.add_parser(
+        "evidence-export", help="Export evidence records and occurrence provenance"
+    )
+    evidence_export.add_argument("--config", required=True)
+    evidence_export.add_argument("--evidence-run", default=None)
+    evidence_export.add_argument("--out", required=True)
+    evidence_export.set_defaults(func=command_evidence_export)
 
     args = parser.parse_args(argv)
     try:
@@ -762,6 +793,90 @@ def command_override_remove(args: argparse.Namespace) -> int:
         remove_override(store, args.id)
         print(f"removed: {args.id}")
     return 0
+
+
+def _evidence_settings(args: argparse.Namespace) -> EvidenceSettings:
+    from dataclasses import replace
+
+    limits = ExtractionLimits()
+    if args.timeout is not None:
+        limits = replace(limits, timeout_seconds=max(0.1, float(args.timeout)))
+    if args.max_input_mb is not None:
+        limits = replace(
+            limits,
+            max_input_bytes=max(1, int(args.max_input_mb)) * 1024 * 1024,
+        )
+    if args.max_text_chars is not None:
+        limits = replace(limits, max_text_chars=max(1000, int(args.max_text_chars)))
+    return EvidenceSettings(limits=limits)
+
+
+def command_evidence(args: argparse.Namespace) -> int:
+    config = _config(args)
+    settings = _evidence_settings(args)
+    with _store(config) as store:
+        _register(store, config)
+        run_id = _run_id(store, args.run, config)
+        service = EvidenceService(store, config, settings)
+        print(f"evidence run for {run_id}", flush=True)
+
+        def progress(payload: dict[str, object]) -> None:
+            if payload.get("message"):
+                print(str(payload["message"]), flush=True)
+
+        result = service.run(
+            run_id,
+            progress=progress,
+            retry_failures=args.retry_failures,
+        )
+        print(json.dumps(result.__dict__, indent=2, sort_keys=True))
+        if args.out:
+            jsonl, csv_path = service.export(args.out)
+            print(f"evidence JSONL: {jsonl}")
+            print(f"evidence CSV:   {csv_path}")
+        if result.status == "cancelled":
+            return EXIT_INCOMPLETE
+        failures = sum(
+            result.counts.get(status, 0)
+            for status in (
+                "encrypted",
+                "malformed",
+                "timeout",
+                "crashed",
+                "resource_limit",
+                "input_too_large",
+                "hash_unavailable",
+                "source_unavailable",
+                "source_changed",
+                "dependency_missing",
+            )
+        )
+        return EXIT_EVIDENCE_FAILURE if failures else EXIT_OK
+
+
+def command_evidence_stats(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with _store(config) as store:
+        _register(store, config)
+        service = EvidenceService(store, config)
+        try:
+            stats = service.stats(args.evidence_run)
+        except ReclaimError as exc:
+            print(f"reclaim: error: {exc}", file=sys.stderr)
+            return EXIT_ERROR
+        print(json.dumps(stats.__dict__, indent=2, sort_keys=True))
+    return EXIT_OK
+
+
+def command_evidence_export(args: argparse.Namespace) -> int:
+    config = _config(args)
+    with _store(config) as store:
+        _register(store, config)
+        service = EvidenceService(store, config)
+        jsonl, csv_path = service.export(args.out, args.evidence_run)
+        print(f"evidence JSONL: {jsonl}")
+        print(f"evidence CSV:   {csv_path}")
+    return EXIT_OK
 
 
 if __name__ == "__main__":  # pragma: no cover

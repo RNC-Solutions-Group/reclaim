@@ -11,9 +11,10 @@ The operator approved the architecture direction with these scope constraints:
 
 - **ADR-003 approved.** Evidence, understanding, recommendations, overrides, and
   plans remain separate. A recommendation is never authorization.
-- **ADR-004 approved in principle.** Bounded local extraction with explicit
-  unsupported/error states, subprocess isolation where appropriate, and
-  dependency/license review. Detailed implementation belongs to M3.
+- **ADR-004 implemented in M3.** Bounded local extraction with explicit
+  unsupported/error states, subprocess isolation, archive/XML limits, and
+  dependency/license review. Evidence remains non-executable migration
+  intelligence.
 - **ADR-005 approved in principle.** Local ONNX embedding-provider architecture
   retained; no model selection or bundling during M1.
 - **ADR-006 approved.** Confidence must be empirically calibrated; no
@@ -26,7 +27,8 @@ The operator approved the architecture direction with these scope constraints:
   thresholds; full naming intelligence is not M1.
 - **ADR-009 conditionally approved.** PySide6/Qt is the GUI direction, subject to
   LGPL compliance, packaging, redistribution, and replacement considerations.
-  GUI work is not M1.
+  The M2 functional alpha is implemented; distribution/legal review remains
+  pending.
 - **ADR-010 approved.** No SLM in the base alpha; Enhanced remains
   benchmark-gated and requires a future operator decision. No SLM or external
   provider work in M1.
@@ -115,7 +117,7 @@ determinism become possible.
 
 ## ADR-004 — Extraction stack, isolation, and format scope
 
-**Status:** Approved in principle 2026-11-22; implementation deferred to M3.
+**Status:** Approved in principle 2026-11-22; implemented in M3 (bounded subprocess extraction, archive/XML limits, content-addressed evidence cache).
 
 **Context.** Document parsing is the largest capability gap and a security
 boundary. Python has good permissive libraries but no single universal parser.
@@ -265,7 +267,8 @@ claimed.
 
 ## ADR-009 — GUI: PySide6/Qt, with LGPL compliance review
 
-**Status:** Conditionally approved 2026-11-22; GUI work deferred to M2.
+**Status:** Conditionally approved 2026-11-22; implemented in M2 as a dynamically
+linked optional PySide6 dependency.
 
 **Context.** The alpha needs large virtualized tables, a tree preview, progress
 jobs, and native packaging.
@@ -363,12 +366,12 @@ disposition; do not assume it matches another library and do not extract it.
 | 001 | Modular monolith / SQLite | Accepted | — |
 | 002 | Source-root cache identity | Accepted | M1 |
 | 003 | Evidence/understanding/plan separation | Approved | M3 |
-| 004 | Extraction stack/isolation | Approved in principle | M3 |
+| 004 | Extraction stack/isolation | Implemented in M3; format/security limitations documented | M3 |
 | 005 | Embedding runtime/model | Approved in principle; model gated | M6 |
 | 006 | Confidence calibration | Approved | M4 |
 | 007 | Immutable plan/execution | Approved; implemented/hardened in M1/M1A | M1 |
 | 008 | Filename policies | Approved | M5 |
-| 009 | PySide6 GUI | Conditionally approved | M2 |
+| 009 | PySide6 GUI | Conditionally approved; implemented in M2; distribution/legal review pending | M2 |
 | 010 | SLM deferral | Approved | M8 |
 | 011 | External provider interface | Proposed | M9 |
 | 012 | Media packages opaque | Accepted | M7 |

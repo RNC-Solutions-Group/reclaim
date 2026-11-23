@@ -4,12 +4,12 @@ Reclaim is a local-first utility for discovering, inventorying, reconciling,
 organizing, and migrating personal files across multiple computers and backup
 collections — without risking the originals.
 
-> **Status: M1 + M1A migration spine (pre-alpha).** The repository contains a
-> read-only inventory/hashing engine plus the M1 plan, preview, authorization,
-> journaled copy, verification, resume, and reconciliation subsystem, hardened
-> by M1A correctness and filesystem-safety corrections. It does **not** yet
-> contain document extraction, a GUI, or real-data migration authorization. M1
-> is validated only on synthetic datasets.
+> **Status: M3 evidence extraction functional alpha (pre-alpha).** The repository
+> contains the CP1 inventory engine, M1/M1A plan and journaled migration safety,
+> the M2 PySide6 desktop shell, and the M3 bounded document-evidence subsystem.
+> It does **not** yet contain classification, naming intelligence, semantic
+> search, GUI evidence browsing, installers, or real-data migration
+> authorization. Validation is synthetic only.
 
 ## Why Reclaim exists
 
@@ -49,22 +49,31 @@ Reclaim's approach is deliberately conservative:
 
 ## Quick start (development)
 
-Requires Python 3.11 or newer. The CP1 engine uses only the standard library.
-The editable install uses the standard PEP 517 build path, which requires
-`setuptools` (pip normally provides it in an isolated build environment; an
-offline install needs it preinstalled).
+Requires Python 3.11 or newer. The engine uses only the standard library. The
+desktop shell uses PySide6 as an optional dependency. The editable install uses
+the standard PEP 517 build path, which requires `setuptools` (pip normally
+provides it in an isolated build environment; an offline install needs it
+preinstalled).
 
 ```bash
 python -m venv .venv
 # Windows: .venv\Scripts\activate
 # macOS/Linux: source .venv/bin/activate
-python -m pip install -e .
+python -m pip install -e ".[gui,evidence]"
 
+# Desktop shell
+reclaim-gui
+
+# Engine CLI
 reclaim init   --config /path/to/project.toml
 reclaim scan   --config /path/to/project.toml
 reclaim hash   --config /path/to/project.toml
 reclaim export --config /path/to/project.toml
 reclaim verify --config /path/to/project.toml --sample 25
+
+# M3 evidence extraction (synthetic data only)
+reclaim evidence --config /path/to/project.toml --out /path/to/evidence-export
+reclaim evidence-stats --config /path/to/project.toml
 
 # M1 migration spine (synthetic data only)
 reclaim plan --config /path/to/project.toml --destination /path/to/destination
@@ -105,13 +114,16 @@ overlapping source/workspace/destination paths before scanning.
 | Verification failure invalidation and accurate reconciliation success/assessment | Implemented (M1A) |
 | Whole-path target equivalence and fail-closed atomic publication | Implemented (M1A) |
 | Stable CLI exit codes for failure/incomplete/verification/reconciliation | Implemented (M1A) |
-| Similarity, revision detection, content extraction, and AI assistance | Not implemented (later milestone) |
-| GUI, naming intelligence, real-data migration | Not implemented (later milestones) |
+| PySide6 desktop shell: project/source/destination setup, scan/hash/analyze, review, plan, authorize, execute/pause/resume, verify, reconcile | Implemented (M2 functional alpha) |
+| Bounded evidence extraction: versioned registry, provenance-rich contract, subprocess isolation, content-addressed cache, CLI stats/export | Implemented (M3 functional alpha) |
+| Similarity, revision detection, classification, and AI assistance | Not implemented (later milestone) |
+| GUI packaging/installer, naming intelligence, real-data migration | Not implemented (later milestones) |
 
 ## Repository layout
 
 ```text
 src/reclaim/          Reusable inventory and analysis engine
+  gui/                 PySide6 desktop shell and application services
   config.py           Project/source configuration and safety validation
   paths.py            Canonical paths, overlap checks, long-path handling
   scanner.py          Read-only enumeration
@@ -123,11 +135,14 @@ src/reclaim/          Reusable inventory and analysis engine
   destination.py      M1 destination policy and validation
   planning.py         M1 plans, recommendations, overrides, authorization
   execution.py        M1 journaled copy, resume, verification, reconciliation
+  evidence/           M3 extractors, worker isolation, cache, and reporting
   cli.py              Command-line interface
   data/               Generic default type map and policy
 tests/                Synthetic-fixture tests (no real user data)
 docs/cp1/             CP1 architecture, data model, roadmap, decisions
 docs/m1/              M1 architecture, data model, operator guide, test matrix
+docs/m2/              M2 desktop architecture, user guide, test matrix, screenshots, packaging
+docs/m3/              M3 evidence architecture, operator guide, test matrix, benchmark, dependencies
 docs/product/         Product outlook, architecture assessment, roadmap, ADRs, benchmarks
 docs/cp1-followup/    CP1 corrective work notes
 config/               Synthetic example configuration
@@ -156,11 +171,30 @@ precedence, cache reuse, and an end-to-end scan/hash/export run. M1 adds
 destination policy, whole-path equivalence, plan determinism, authorization
 invalidation, journaled execution, resume, no-overwrite/publication failure,
 source-change, destination-race, verification invalidation/recovery, and
-balanced-vs-successful reconciliation tests. **113 tests pass** on the M1A
-branch. Tests that require junction creation are skipped on platforms where the
-process is not permitted to create one.
+balanced-vs-successful reconciliation tests. M2 adds whole-path review
+virtualization, destination identity, plan-freshness, and deterministic-plan
+tests. **M3 adds 13 synthetic evidence tests**, for **143 total passing** on the
+M3 branch. Tests that require junction creation or optional GUI dependencies are
+skipped when the platform cannot provide them.
 
 ## Documentation
+
+**M3 evidence extraction**
+
+- [M3 overview](docs/m3/README.md)
+- [M3 architecture](docs/m3/architecture.md)
+- [M3 operator guide](docs/m3/user-guide.md)
+- [M3 test matrix](docs/m3/test-matrix.md)
+- [M3 benchmark](docs/m3/benchmarks.md)
+- [M3 dependency/license inventory](docs/m3/dependencies.md)
+
+**M2 desktop shell**
+
+- [M2 overview and screenshots](docs/m2/README.md)
+- [M2 architecture and GUI boundaries](docs/m2/architecture.md)
+- [M2 operator guide](docs/m2/user-guide.md)
+- [M2 test matrix](docs/m2/test-matrix.md)
+- [Packaging and Qt/LGPL notes](docs/m2/packaging.md)
 
 **M1 migration spine**
 
