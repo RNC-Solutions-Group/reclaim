@@ -177,6 +177,10 @@ adding intelligence.
 
 ## 6. M3 — Evidence extraction v1
 
+> **Status 2026-11-23:** Functional alpha implemented on `feat/m3`; 143
+> synthetic tests pass, including 13 evidence tests. Compact 61-file corpus
+> benchmark recorded. Operator review pending. See [`docs/m3/`](../m3/README.md).
+
 **Objective:** Turn supported documents into bounded, provenance-rich evidence.
 
 ### Scope

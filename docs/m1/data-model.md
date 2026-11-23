@@ -1,9 +1,7 @@
-# M1 — Data Model (Schema v4)
+# M1 — Data Model (Schema v4; M3 extends to v5)
 
-Schema v3 adds M1 analysis, override, plan, authorization, execution, journal,
-and verification structures. Schema v4 adds the raw selected destination path
-(`destination_selected`) so redirection can be validated separately from the
-canonical root. Both are forward migrations.
+M3 (schema v5) adds evidence records/occurrences/runs without changing the M1
+plan, authorization, execution, or inventory tables described here.
 
 ## 1. Entity relationships
 

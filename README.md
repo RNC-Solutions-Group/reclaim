@@ -4,13 +4,12 @@ Reclaim is a local-first utility for discovering, inventorying, reconciling,
 organizing, and migrating personal files across multiple computers and backup
 collections — without risking the originals.
 
-> **Status: M2 desktop functional alpha (pre-alpha).** The repository contains a
-> read-only inventory/hashing engine, the M1/M1A plan, authorization, journaled
-> copy, verification, resume, and reconciliation subsystem, and a PySide6
-> desktop shell for the full synthetic migration workflow. It does **not** yet
-> contain document extraction, classification, naming intelligence, GUI
-> packaging/installers, or real-data migration authorization. M1/M2 are
-> validated only on synthetic datasets.
+> **Status: M3 evidence extraction functional alpha (pre-alpha).** The repository
+> contains the CP1 inventory engine, M1/M1A plan and journaled migration safety,
+> the M2 PySide6 desktop shell, and the M3 bounded document-evidence subsystem.
+> It does **not** yet contain classification, naming intelligence, semantic
+> search, GUI evidence browsing, installers, or real-data migration
+> authorization. Validation is synthetic only.
 
 ## Why Reclaim exists
 
@@ -60,7 +59,7 @@ preinstalled).
 python -m venv .venv
 # Windows: .venv\Scripts\activate
 # macOS/Linux: source .venv/bin/activate
-python -m pip install -e ".[gui]"
+python -m pip install -e ".[gui,evidence]"
 
 # Desktop shell
 reclaim-gui
@@ -71,6 +70,10 @@ reclaim scan   --config /path/to/project.toml
 reclaim hash   --config /path/to/project.toml
 reclaim export --config /path/to/project.toml
 reclaim verify --config /path/to/project.toml --sample 25
+
+# M3 evidence extraction (synthetic data only)
+reclaim evidence --config /path/to/project.toml --out /path/to/evidence-export
+reclaim evidence-stats --config /path/to/project.toml
 
 # M1 migration spine (synthetic data only)
 reclaim plan --config /path/to/project.toml --destination /path/to/destination
@@ -112,7 +115,8 @@ overlapping source/workspace/destination paths before scanning.
 | Whole-path target equivalence and fail-closed atomic publication | Implemented (M1A) |
 | Stable CLI exit codes for failure/incomplete/verification/reconciliation | Implemented (M1A) |
 | PySide6 desktop shell: project/source/destination setup, scan/hash/analyze, review, plan, authorize, execute/pause/resume, verify, reconcile | Implemented (M2 functional alpha) |
-| Similarity, revision detection, content extraction, and AI assistance | Not implemented (later milestone) |
+| Bounded evidence extraction: versioned registry, provenance-rich contract, subprocess isolation, content-addressed cache, CLI stats/export | Implemented (M3 functional alpha) |
+| Similarity, revision detection, classification, and AI assistance | Not implemented (later milestone) |
 | GUI packaging/installer, naming intelligence, real-data migration | Not implemented (later milestones) |
 
 ## Repository layout
@@ -131,12 +135,14 @@ src/reclaim/          Reusable inventory and analysis engine
   destination.py      M1 destination policy and validation
   planning.py         M1 plans, recommendations, overrides, authorization
   execution.py        M1 journaled copy, resume, verification, reconciliation
+  evidence/           M3 extractors, worker isolation, cache, and reporting
   cli.py              Command-line interface
   data/               Generic default type map and policy
 tests/                Synthetic-fixture tests (no real user data)
 docs/cp1/             CP1 architecture, data model, roadmap, decisions
 docs/m1/              M1 architecture, data model, operator guide, test matrix
 docs/m2/              M2 desktop architecture, user guide, test matrix, screenshots, packaging
+docs/m3/              M3 evidence architecture, operator guide, test matrix, benchmark, dependencies
 docs/product/         Product outlook, architecture assessment, roadmap, ADRs, benchmarks
 docs/cp1-followup/    CP1 corrective work notes
 config/               Synthetic example configuration
@@ -165,12 +171,22 @@ precedence, cache reuse, and an end-to-end scan/hash/export run. M1 adds
 destination policy, whole-path equivalence, plan determinism, authorization
 invalidation, journaled execution, resume, no-overwrite/publication failure,
 source-change, destination-race, verification invalidation/recovery, and
-balanced-vs-successful reconciliation tests. **M2 adds 17 synthetic GUI/service
-tests**, for **130 total passing** on the M2 branch. Tests that require junction
-creation are skipped on platforms where the process is not permitted to create
-one.
+balanced-vs-successful reconciliation tests. M2 adds whole-path review
+virtualization, destination identity, plan-freshness, and deterministic-plan
+tests. **M3 adds 13 synthetic evidence tests**, for **143 total passing** on the
+M3 branch. Tests that require junction creation or optional GUI dependencies are
+skipped when the platform cannot provide them.
 
 ## Documentation
+
+**M3 evidence extraction**
+
+- [M3 overview](docs/m3/README.md)
+- [M3 architecture](docs/m3/architecture.md)
+- [M3 operator guide](docs/m3/user-guide.md)
+- [M3 test matrix](docs/m3/test-matrix.md)
+- [M3 benchmark](docs/m3/benchmarks.md)
+- [M3 dependency/license inventory](docs/m3/dependencies.md)
 
 **M2 desktop shell**
 
